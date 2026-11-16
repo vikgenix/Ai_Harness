@@ -1,0 +1,39 @@
+# AI Harness model configuration.
+#
+# The API key is NEVER stored here. It is read at runtime from the
+# AI_API_KEY environment variable.
+#
+# Non-secret settings can also be overridden with environment variables:
+#   AI_PROVIDER, AI_MODEL, AI_BASE_URL
+
+# Which API to call: auto | anthropic | openai | gemini | groq | openai-compatible
+# "auto" picks the provider from the key's prefix:
+#   sk-ant- -> anthropic   gsk_ -> groq   AIza -> gemini
+#   sk-or-  -> openai-compatible (OpenRouter)   sk- -> openai
+provider: auto
+
+# Model to use. null = use the provider's default listed under `defaults`.
+model: null
+
+# Only needed for openai-compatible endpoints (Ollama, DeepSeek, Together, ...).
+base_url: null
+
+max_output_tokens: 16000
+
+# Repeatability (spec section 10). Each setting is sent only to providers
+# that accept it (for example, the Anthropic API rejects temperature).
+temperature: 0
+seed: 42
+
+limits:
+  max_steps: 60          # tool-call rounds per task before the agent stops
+  max_cost_usd: 2.00     # hard spending limit per task
+  request_timeout_s: 300
+
+# Default model per provider. Check each provider's model list before an
+# official run; model names change often.
+defaults:
+  anthropic: claude-opus-5-5
+  openai: gpt-5
+  gemini: gemini-2.5-pro
+  groq: openai/gpt-oss-120b
