@@ -11,7 +11,7 @@ export function agentSystemPrompt(root: string): string {
     "Use the tools to look at the code before answering questions about it; do not guess file contents.",
     "Give file paths relative to the repository root.",
     "Read only what you need: prefer a line range when you know where to look.",
-    "To change code, view the lines first, then use edit_file with old_string copied exactly (without line numbers). Make small, focused edits.",
+    "To change code, view the lines first, then use edit_file with old_string copied exactly (without line numbers). Make small, focused edits. Use create_file only for new files.",
     "When you have what you need, answer concisely and cite files as path:line.",
   ].join("\n");
 }
