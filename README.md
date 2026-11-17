@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phase 2 in progress. The harness can talk to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, with streaming, prompt caching and cost tracking. Tools and the agent loop come next. See [Roadmap](#roadmap).
+> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tool, `view_file`, is in; more tools are added one at a time. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -13,9 +13,10 @@ make ping                        # optional: one tiny request to check the key a
 make run                         # starts the interactive harness
 ```
 
-Inside the harness, type a message to chat with the model, or use a command:
+Inside the harness, type a request about the code in the working directory (by default the directory you started in), or use a command:
 
 ```
+/repo ../some/local/project   # work in a local directory
 /repo https://github.com/owner/project
 /fix 123                      # fix issue #123
 /fix "parser crashes on empty input"
@@ -71,6 +72,21 @@ export AI_PROVIDER=openai-compatible AI_BASE_URL=http://localhost:11434/v1 AI_MO
 - **Refusal fallback** (Anthropic): if a safety filter declines a request, the API retries it on another Claude model. Set `refusal_fallback: false` to turn it off.
 - **Retries**: rate limits, overloads and network errors are retried by each provider's SDK, up to `limits.max_retries` times.
 
+## Tools
+
+The agent works in a loop: it asks the model, runs the tools the model calls, sends back the results, and repeats until the model answers. Each tool call is shown as it happens (`→ view_file(path=src/index.ts)`).
+
+| Tool | What it does |
+|---|---|
+| `view_file` | Reads a file with line numbers. Shows up to 400 lines unless given a range (max 1000), cuts very long lines, and skips binary files. |
+
+Safety and limits:
+
+- Tools only see files inside the working directory. Paths that leave it (`../`, absolute paths, symlinks) are refused.
+- Every tool input is checked against the tool's schema before it runs. Mistakes come back to the model as an error it can fix, not a crash.
+- Tools from a reply cut off by the output limit are never run.
+- A request stops at `limits.max_steps` model calls or `limits.max_cost_usd`, whichever comes first.
+
 ## Optional: GitHub access
 
 Set `GITHUB_TOKEN` to let the harness push branches, open pull requests and post issues. Without it, the harness still clones, fixes and commits locally and saves the patch.
@@ -89,8 +105,13 @@ src/index.ts          entry point
 src/config.ts         loads and validates config; reads AI_API_KEY
 src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
+src/agent/            agent loop (model → tools → model ...) and system prompt
+src/tools/            tools the agent can call
+  registry.ts         looks up tools, validates input, turns failures into results
+  view_file.ts        reads files with line numbers
+  paths.ts            keeps every path inside the working directory
 src/model/            provider-neutral model client
-  types.ts            messages, usage, ModelClient interface
+  types.ts            messages, tool calls, usage, ModelClient interface
   anthropic.ts        Anthropic adapter (official SDK)
   openai.ts           OpenAI / Groq / OpenRouter / compatible adapter
   gemini.ts           Gemini adapter
@@ -106,7 +127,7 @@ tests/                offline tests (vitest)
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
-| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ⬜ tools, agent loop |
+| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file` · ⬜ `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 | `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |

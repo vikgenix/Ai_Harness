@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { HarnessConfig } from "../config.js";
+import { DEFAULT_BASE_URLS } from "../providers.js";
 import { ModelError } from "./errors.js";
-import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, Usage } from "./types.js";
+import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
  * Models that accept the server-side refusal fallback (`fallbacks: "default"`).
@@ -45,6 +46,7 @@ export class AnthropicClient implements ModelClient {
       cache_control: { type: "ephemeral" },
       system: request.system,
       messages: request.messages.map((m) => this.toParam(m)),
+      ...(request.tools?.length ? { tools: request.tools.map((t) => this.toTool(t)) } : {}),
       ...(this.settings.effort ? { output_config: { effort: this.settings.effort } } : {}),
       ...(useFallback ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
     };
@@ -64,11 +66,15 @@ export class AnthropicClient implements ModelClient {
         .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
         .map((b) => b.text)
         .join("");
+      const toolCalls: ToolCall[] = msg.content
+        .filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use")
+        .map((b) => ({ id: b.id, name: b.name, input: b.input }));
 
       return {
         message: {
           role: "assistant",
           content: text,
+          ...(toolCalls.length ? { toolCalls } : {}),
           native: { provider: "anthropic", model: msg.model, data: msg.content },
         },
         usage: toUsage(msg.usage),
@@ -81,15 +87,47 @@ export class AnthropicClient implements ModelClient {
     }
   }
 
+  private toTool(t: ToolSpec): Anthropic.Beta.BetaTool {
+    return {
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
+      // Stream tool input as it is generated instead of after server-side
+      // buffering (large file edits otherwise arrive in one late burst). The
+      // input is then not validated by the API: the tool registry validates it,
+      // and the agent loop never runs tools from a cut-off reply. Proxies may
+      // reject the field, so only send it to the real API.
+      ...(this.settings.baseUrl === DEFAULT_BASE_URLS.anthropic ? { eager_input_streaming: true } : {}),
+    };
+  }
+
   private toParam(m: Message): Anthropic.Beta.BetaMessageParam {
     if (m.role === "user") return { role: "user", content: m.content };
-    // Send Claude's own reply back unchanged (thinking blocks included). The
-    // API drops blocks a different model can't read, so this is safe even
-    // after a fallback switched models.
+    if (m.role === "tool") {
+      return {
+        role: "user",
+        content: m.results.map((r) => ({
+          type: "tool_result" as const,
+          tool_use_id: r.callId,
+          content: r.content,
+          ...(r.isError ? { is_error: true } : {}),
+        })),
+      };
+    }
+    // Send Claude's own reply back unchanged (thinking and tool_use blocks
+    // included). The API drops blocks a different model can't read, so this
+    // is safe even after a fallback switched models.
     if (m.native?.provider === "anthropic") {
       return { role: "assistant", content: m.native.data as Anthropic.Beta.BetaContentBlockParam[] };
     }
-    return { role: "assistant", content: m.content };
+    if (!m.toolCalls?.length) return { role: "assistant", content: m.content };
+    return {
+      role: "assistant",
+      content: [
+        ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
+        ...m.toolCalls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input ?? {} })),
+      ],
+    };
   }
 }
 
@@ -136,6 +174,10 @@ export function toModelError(err: unknown): ModelError {
     if (err instanceof Anthropic.BadRequestError) return new ModelError("bad_request", detail, err.status, opts);
     if (err instanceof Anthropic.InternalServerError) return new ModelError("server", detail, err.status, opts);
     return new ModelError("unknown", detail, err.status, opts);
+  }
+  // Raised by the SDK when streamed tool input is not valid JSON at all.
+  if (err instanceof Anthropic.AnthropicError && err.message.startsWith("Unable to parse tool parameter JSON")) {
+    return new ModelError("invalid_output", err.message, undefined, opts);
   }
   return new ModelError("unknown", err instanceof Error ? err.message : String(err), undefined, opts);
 }

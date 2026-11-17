@@ -161,3 +161,75 @@ describe("toModelError", () => {
     expect(new ModelError("network", "").retryable).toBe(true);
   });
 });
+
+describe("AnthropicClient tools", () => {
+  const tools = [
+    {
+      name: "view_file",
+      description: "Read a file.",
+      inputSchema: { type: "object" as const, properties: { path: { type: "string" as const } }, required: ["path"] },
+    },
+  ];
+
+  it("sends tools with eager input streaming on the real API only", () => {
+    const p = new AnthropicClient(settings, fakeClient({}).client).buildParams({ system: "", messages: [], tools });
+    expect(p.tools).toEqual([{ name: "view_file", description: "Read a file.", input_schema: tools[0]!.inputSchema, eager_input_streaming: true }]);
+    const proxied = new AnthropicClient({ ...settings, baseUrl: "https://proxy.example" }, fakeClient({}).client);
+    expect(proxied.buildParams({ system: "", messages: [], tools }).tools?.[0]).not.toHaveProperty("eager_input_streaming");
+    expect(new AnthropicClient(settings, fakeClient({}).client).buildParams({ system: "", messages: [] })).not.toHaveProperty("tools");
+  });
+
+  it("sends tool results as a user turn, with is_error only on failures", () => {
+    const p = new AnthropicClient(settings, fakeClient({}).client).buildParams({
+      system: "",
+      messages: [
+        {
+          role: "tool",
+          results: [
+            { callId: "t1", name: "view_file", content: "ok", isError: false },
+            { callId: "t2", name: "view_file", content: "Error: x", isError: true },
+          ],
+        },
+      ],
+    });
+    expect(p.messages[0]).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "t1", content: "ok" },
+        { type: "tool_result", tool_use_id: "t2", content: "Error: x", is_error: true },
+      ],
+    });
+  });
+
+  it("rebuilds tool calls from another provider as tool_use blocks", () => {
+    const p = new AnthropicClient(settings, fakeClient({}).client).buildParams({
+      system: "",
+      messages: [{ role: "assistant", content: "Looking.", toolCalls: [{ id: "call_1", name: "view_file", input: { path: "a" } }] }],
+    });
+    expect(p.messages[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "Looking." },
+        { type: "tool_use", id: "call_1", name: "view_file", input: { path: "a" } },
+      ],
+    });
+  });
+
+  it("reads tool_use blocks from the reply", async () => {
+    const content = [
+      { type: "text", text: "Let me check." },
+      { type: "tool_use", id: "toolu_1", name: "view_file", input: { path: "a.ts" } },
+    ] as Anthropic.Beta.BetaContentBlock[];
+    const res = await new AnthropicClient(settings, fakeClient({ content, stop_reason: "tool_use" }).client).chat({ system: "", messages: [], tools });
+    expect(res.stopReason).toBe("tool_use");
+    expect(res.message.content).toBe("Let me check.");
+    expect(res.message.toolCalls).toEqual([{ id: "toolu_1", name: "view_file", input: { path: "a.ts" } }]);
+    expect(res.message.native?.data).toEqual(content); // replayed unchanged next turn
+  });
+
+  it("maps the SDK's unparseable tool JSON error to invalid_output", () => {
+    const err = new Anthropic.AnthropicError("Unable to parse tool parameter JSON from model. JSON: {\"pa");
+    expect(toModelError(err).kind).toBe("invalid_output");
+    expect(toModelError(err).retryable).toBe(false);
+  });
+});

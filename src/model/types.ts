@@ -10,10 +10,53 @@ export interface UserMessage {
   content: string;
 }
 
+/** JSON Schema subset used to describe tool inputs (understood by every provider). */
+export interface JsonSchemaProperty {
+  type: "string" | "integer" | "number" | "boolean" | "array" | "object";
+  description?: string;
+  enum?: string[];
+  minimum?: number;
+  items?: JsonSchemaProperty;
+}
+
+export interface ToolInputSchema {
+  type: "object";
+  properties: Record<string, JsonSchemaProperty>;
+  required?: string[];
+  additionalProperties?: false;
+}
+
+/** A tool the model may call. */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  inputSchema: ToolInputSchema;
+}
+
+/** A tool call requested by the model. */
+export interface ToolCall {
+  /** Provider-assigned id, echoed back in the matching ToolResult. */
+  id: string;
+  name: string;
+  /** Parsed arguments. Not validated: the tool registry checks them against the schema. */
+  input: unknown;
+  /** Set when the arguments were not valid JSON; holds the raw text. */
+  rawInput?: string;
+}
+
+export interface ToolResult {
+  callId: string;
+  name: string;
+  content: string;
+  isError: boolean;
+}
+
 export interface AssistantMessage {
   role: "assistant";
   /** The visible text of the reply. */
   content: string;
+  /** Tools the model asked to run, in order. */
+  toolCalls?: ToolCall[];
   /**
    * The provider's raw reply, kept so it can be sent back unchanged on the next
    * request. Some providers require this: Claude's thinking blocks and Gemini's
@@ -23,12 +66,20 @@ export interface AssistantMessage {
   native?: { provider: Provider; model: string; data: unknown };
 }
 
-export type Message = UserMessage | AssistantMessage;
+/** Results of the tool calls in the preceding assistant message, one per call. */
+export interface ToolResultsMessage {
+  role: "tool";
+  results: ToolResult[];
+}
+
+export type Message = UserMessage | AssistantMessage | ToolResultsMessage;
 
 export interface ChatRequest {
   /** Instructions that stay the same across the conversation (cached). */
   system: string;
   messages: Message[];
+  /** Tools the model may call (also part of the cached prefix: keep them stable). */
+  tools?: ToolSpec[];
   /** Called with each piece of text as it streams in. */
   onText?: (delta: string) => void;
   signal?: AbortSignal;

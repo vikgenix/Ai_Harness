@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { Effort, HarnessConfig } from "../config.js";
 import type { Provider } from "../providers.js";
 import { ModelError } from "./errors.js";
-import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, Usage } from "./types.js";
+import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
  * One adapter for every API that speaks the OpenAI Chat Completions format:
@@ -63,7 +63,8 @@ export class OpenAICompatibleClient implements ModelClient {
       model,
       stream: true,
       stream_options: { include_usage: true },
-      messages: [{ role: "system", content: request.system }, ...request.messages.map(toParam)],
+      messages: [{ role: "system", content: request.system }, ...request.messages.flatMap(toParams)],
+      ...(request.tools?.length ? { tools: request.tools.map(toTool) } : {}),
       // OpenAI and Groq use the newer name; generic servers mostly know only max_tokens.
       ...(provider === "openai-compatible" ? { max_tokens: maxOutputTokens } : { max_completion_tokens: maxOutputTokens }),
       ...(temperature !== undefined && !(provider === "openai" && reasoning) ? { temperature } : {}),
@@ -84,6 +85,8 @@ export class OpenAICompatibleClient implements ModelClient {
       let finish: string | null = null;
       let usage: OpenAI.CompletionUsage | undefined;
       let model = this.model;
+      // Tool calls stream in pieces, matched up by index.
+      const calls: { id: string; name: string; args: string }[] = [];
 
       for await (const chunk of stream) {
         if (chunk.model) model = chunk.model;
@@ -93,16 +96,26 @@ export class OpenAICompatibleClient implements ModelClient {
           text += delta;
           request.onText?.(delta);
         }
+        for (const tc of choice?.delta?.tool_calls ?? []) {
+          const call = (calls[tc.index] ??= { id: "", name: "", args: "" });
+          if (tc.id) call.id = tc.id;
+          if (tc.function?.name) call.name += tc.function.name;
+          if (tc.function?.arguments) call.args += tc.function.arguments;
+        }
         if (choice?.finish_reason) finish = choice.finish_reason;
         // Groq has also reported usage under x_groq.usage.
         const u = chunk.usage ?? (chunk as { x_groq?: { usage?: OpenAI.CompletionUsage } }).x_groq?.usage;
         if (u) usage = u;
       }
 
+      const toolCalls = calls.filter(Boolean).map((c, i) => toToolCall(c, i));
+      // Some servers report "stop" even when the reply is a tool call.
+      const stopReason = toolCalls.length && finish === "stop" ? "tool_use" : toStopReason(finish);
+
       return {
-        message: { role: "assistant", content: text },
+        message: { role: "assistant", content: text, ...(toolCalls.length ? { toolCalls } : {}) },
         usage: toUsage(usage),
-        stopReason: toStopReason(finish),
+        stopReason,
         model,
         durationMs: Date.now() - started,
       };
@@ -112,8 +125,41 @@ export class OpenAICompatibleClient implements ModelClient {
   }
 }
 
-function toParam(m: Message): OpenAI.Chat.ChatCompletionMessageParam {
-  return { role: m.role, content: m.content };
+function toTool(t: ToolSpec): OpenAI.Chat.ChatCompletionTool {
+  return { type: "function", function: { name: t.name, description: t.description, parameters: { ...t.inputSchema } } };
+}
+
+function toToolCall(c: { id: string; name: string; args: string }, index: number): ToolCall {
+  // Some compatible servers leave out the id; one is needed to match results.
+  const id = c.id || `call_${index}`;
+  if (!c.args.trim()) return { id, name: c.name, input: {} };
+  try {
+    return { id, name: c.name, input: JSON.parse(c.args) as unknown };
+  } catch {
+    return { id, name: c.name, input: undefined, rawInput: c.args };
+  }
+}
+
+/** One neutral message can become several: each tool result is its own "tool" message. */
+function toParams(m: Message): OpenAI.Chat.ChatCompletionMessageParam[] {
+  if (m.role === "user") return [{ role: "user", content: m.content }];
+  if (m.role === "tool") {
+    return m.results.map((r) => ({ role: "tool" as const, tool_call_id: r.callId, content: r.content }));
+  }
+  if (!m.toolCalls?.length) return [{ role: "assistant", content: m.content }];
+  return [
+    {
+      role: "assistant",
+      content: m.content || null,
+      tool_calls: m.toolCalls.map((c) => ({
+        id: c.id,
+        type: "function" as const,
+        // Broken JSON is replayed as {} (some servers reject invalid arguments
+        // in history); the error result already shows the model what it sent.
+        function: { name: c.name, arguments: JSON.stringify(c.input ?? {}) },
+      })),
+    },
+  ];
 }
 
 function toUsage(u: OpenAI.CompletionUsage | undefined): Usage {

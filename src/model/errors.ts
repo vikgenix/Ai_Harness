@@ -11,6 +11,7 @@ export type ModelErrorKind =
   | "timeout"
   | "network"
   | "aborted" // cancelled by the user
+  | "invalid_output" // the model produced output that could not be parsed (e.g. broken tool JSON)
   | "unknown";
 
 const HINTS: Record<ModelErrorKind, string> = {
@@ -22,6 +23,7 @@ const HINTS: Record<ModelErrorKind, string> = {
   timeout: "The request timed out. Raise limits.request_timeout_s if this repeats.",
   network: "Could not reach the provider. Check the network or base_url.",
   aborted: "The request was cancelled.",
+  invalid_output: "The model's reply could not be parsed. Retrying usually helps.",
   unknown: "Unexpected error from the provider.",
 };
 

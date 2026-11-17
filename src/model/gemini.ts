@@ -1,7 +1,23 @@
-import { ApiError, GoogleGenAI, ThinkingLevel, type Content, type GenerateContentParameters, type GenerateContentResponseUsageMetadata, type Part } from "@google/genai";
+import {
+  ApiError,
+  GoogleGenAI,
+  ThinkingLevel,
+  type Content,
+  type FunctionDeclaration,
+  type GenerateContentParameters,
+  type GenerateContentResponseUsageMetadata,
+  type Part,
+} from "@google/genai";
 import type { Effort, HarnessConfig } from "../config.js";
 import { ModelError } from "./errors.js";
-import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, Usage } from "./types.js";
+import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
+
+/**
+ * Gemini does not always give function calls an id. Calls without one get a
+ * local id with this prefix, which is never sent back to the API (results are
+ * then matched by name and order, as Gemini expects).
+ */
+const LOCAL_ID_PREFIX = "gemini-local-";
 
 type Settings = Pick<HarnessConfig, "model" | "baseUrl" | "apiKey" | "maxOutputTokens" | "effort" | "temperature" | "seed" | "limits">;
 
@@ -59,6 +75,7 @@ export class GeminiClient implements ModelClient {
         ...(temperature !== undefined && !isGemini3(model) ? { temperature } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...thinkingConfig(model, effort),
+        ...(request.tools?.length ? { tools: [{ functionDeclarations: request.tools.map(toDeclaration) }] } : {}),
         ...(request.signal ? { abortSignal: request.signal } : {}),
       },
     };
@@ -70,6 +87,7 @@ export class GeminiClient implements ModelClient {
       const stream = await this.client.models.generateContentStream(this.buildParams(request));
 
       const parts: Part[] = [];
+      const toolCalls: ToolCall[] = [];
       let text = "";
       let finish: string | undefined;
       let blocked = false;
@@ -88,6 +106,10 @@ export class GeminiClient implements ModelClient {
             text += part.text;
             request.onText?.(part.text);
           }
+          if (part.functionCall) {
+            const fc = part.functionCall;
+            toolCalls.push({ id: fc.id ?? `${LOCAL_ID_PREFIX}${toolCalls.length}`, name: fc.name ?? "", input: fc.args ?? {} });
+          }
         }
       }
 
@@ -95,12 +117,14 @@ export class GeminiClient implements ModelClient {
         message: {
           role: "assistant",
           content: text,
+          ...(toolCalls.length ? { toolCalls } : {}),
           // Keep the parts with their thought signatures: Gemini needs them back
           // unchanged to continue its reasoning across turns.
           native: { provider: "gemini", model: this.model, data: parts },
         },
         usage: toUsage(usage),
-        stopReason: blocked ? "refusal" : toStopReason(finish),
+        // Gemini finishes tool-call replies with STOP; report them as tool use.
+        stopReason: blocked ? "refusal" : toolCalls.length && finish === "STOP" ? "tool_use" : toStopReason(finish),
         model,
         durationMs: Date.now() - started,
       };
@@ -121,10 +145,33 @@ function addPart(parts: Part[], part: Part): void {
   }
 }
 
+function toDeclaration(t: ToolSpec): FunctionDeclaration {
+  return { name: t.name, description: t.description, parametersJsonSchema: t.inputSchema };
+}
+
+const providerId = (id: string) => (id.startsWith(LOCAL_ID_PREFIX) ? {} : { id });
+
 function toContent(m: Message): Content {
   if (m.role === "user") return { role: "user", parts: [{ text: m.content }] };
+  if (m.role === "tool") {
+    return {
+      role: "user",
+      parts: m.results.map((r) => ({
+        functionResponse: {
+          ...providerId(r.callId),
+          name: r.name,
+          response: r.isError ? { error: r.content } : { output: r.content },
+        },
+      })),
+    };
+  }
+  // Gemini's own parts carry thought signatures that must come back unchanged.
   if (m.native?.provider === "gemini") return { role: "model", parts: m.native.data as Part[] };
-  return { role: "model", parts: [{ text: m.content }] };
+  const calls: Part[] = (m.toolCalls ?? []).map((c) => ({
+    functionCall: { ...providerId(c.id), name: c.name, args: (c.input ?? {}) as Record<string, unknown> },
+  }));
+  // Gemini rejects a turn with no parts, so plain replies always keep their text part.
+  return { role: "model", parts: m.content || !calls.length ? [{ text: m.content }, ...calls] : calls };
 }
 
 function toUsage(u: GenerateContentResponseUsageMetadata | undefined): Usage {

@@ -167,3 +167,67 @@ describe("toModelError (OpenAI)", () => {
     expect(toModelError(new OpenAI.APIUserAbortError()).kind).toBe("aborted");
   });
 });
+
+describe("OpenAICompatibleClient tools", () => {
+  const tools = [
+    {
+      name: "view_file",
+      description: "Read a file.",
+      inputSchema: { type: "object" as const, properties: { path: { type: "string" as const } }, required: ["path"] },
+    },
+  ];
+  const toolChunk = (tc: Record<string, unknown>, finish: string | null = null) => ({
+    model: "gpt-4.1-2025",
+    choices: [{ index: 0, delta: { tool_calls: [tc] }, finish_reason: finish }],
+  });
+
+  it("sends tools as functions, and replays calls and results", () => {
+    const p = new OpenAICompatibleClient(base, fakeClient([]).client).buildParams({
+      system: "s",
+      tools,
+      messages: [
+        { role: "user", content: "q" },
+        { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "view_file", input: { path: "a" } }] },
+        {
+          role: "tool",
+          results: [
+            { callId: "c1", name: "view_file", content: "1\tx", isError: false },
+            { callId: "c2", name: "view_file", content: "Error: nope", isError: true },
+          ],
+        },
+      ],
+    });
+    expect(p.tools).toEqual([{ type: "function", function: { name: "view_file", description: "Read a file.", parameters: tools[0]!.inputSchema } }]);
+    expect(p.messages.slice(2)).toEqual([
+      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "view_file", arguments: '{"path":"a"}' } }] },
+      { role: "tool", tool_call_id: "c1", content: "1\tx" },
+      { role: "tool", tool_call_id: "c2", content: "Error: nope" },
+    ]);
+  });
+
+  it("leaves tools out when there are none", () => {
+    expect(new OpenAICompatibleClient(base, fakeClient([]).client).buildParams({ system: "", messages: [] })).not.toHaveProperty("tools");
+  });
+
+  it("assembles streamed tool calls by index", async () => {
+    const { client } = fakeClient([
+      toolChunk({ index: 0, id: "call_a", type: "function", function: { name: "view_file", arguments: '{"pa' } }),
+      toolChunk({ index: 1, id: "call_b", type: "function", function: { name: "view_file", arguments: "" } }),
+      toolChunk({ index: 0, function: { arguments: 'th":"x.ts"}' } }),
+      toolChunk({ index: 1, function: { arguments: '{"path": "broken' } }, "tool_calls"),
+    ]);
+    const res = await new OpenAICompatibleClient(base, client).chat({ system: "", messages: [], tools });
+    expect(res.stopReason).toBe("tool_use");
+    expect(res.message.toolCalls).toEqual([
+      { id: "call_a", name: "view_file", input: { path: "x.ts" } },
+      { id: "call_b", name: "view_file", input: undefined, rawInput: '{"path": "broken' },
+    ]);
+  });
+
+  it("fills in missing ids and treats 'stop' with tool calls as tool use", async () => {
+    const { client } = fakeClient([toolChunk({ index: 0, function: { name: "view_file", arguments: "" } }, "stop")]);
+    const res = await new OpenAICompatibleClient({ ...base, provider: "openai-compatible" }, client).chat({ system: "", messages: [], tools });
+    expect(res.stopReason).toBe("tool_use");
+    expect(res.message.toolCalls).toEqual([{ id: "call_0", name: "view_file", input: {} }]);
+  });
+});

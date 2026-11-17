@@ -139,3 +139,62 @@ describe("toModelError (Gemini)", () => {
     await expect(new GeminiClient(base, fakeClient([], api(429))).chat({ system: "", messages: [] })).rejects.toMatchObject({ kind: "rate_limit" });
   });
 });
+
+describe("GeminiClient tools", () => {
+  const tools = [
+    {
+      name: "view_file",
+      description: "Read a file.",
+      inputSchema: { type: "object" as const, properties: { path: { type: "string" as const } }, required: ["path"] },
+    },
+  ];
+
+  it("sends tools as function declarations with a JSON schema", () => {
+    const p = new GeminiClient(base, fakeClient([])).buildParams({ system: "", messages: [], tools });
+    expect(p.config?.tools).toEqual([{ functionDeclarations: [{ name: "view_file", description: "Read a file.", parametersJsonSchema: tools[0]!.inputSchema }] }]);
+    expect(new GeminiClient(base, fakeClient([])).buildParams({ system: "", messages: [] }).config).not.toHaveProperty("tools");
+  });
+
+  it("reads function calls, keeping their signatures, and reports tool use", async () => {
+    const call = { functionCall: { name: "view_file", args: { path: "a.ts" } }, thoughtSignature: "c2ln" };
+    const client = fakeClient([
+      { candidates: [{ content: { role: "model", parts: [{ text: "Checking." }, call] }, finishReason: "STOP" }] },
+    ]);
+    const res = await new GeminiClient(base, client).chat({ system: "", messages: [], tools });
+    expect(res.stopReason).toBe("tool_use");
+    expect(res.message.toolCalls).toEqual([{ id: "gemini-local-0", name: "view_file", input: { path: "a.ts" } }]);
+    expect(res.message.native?.data).toEqual([{ text: "Checking." }, call]);
+  });
+
+  it("sends results as functionResponse parts; local ids are not sent", () => {
+    const p = new GeminiClient(base, fakeClient([])).buildParams({
+      system: "",
+      messages: [
+        {
+          role: "tool",
+          results: [
+            { callId: "gemini-local-0", name: "view_file", content: "1\tx", isError: false },
+            { callId: "abc", name: "view_file", content: "Error: no", isError: true },
+          ],
+        },
+      ],
+    });
+    expect(p.contents).toEqual([
+      {
+        role: "user",
+        parts: [
+          { functionResponse: { name: "view_file", response: { output: "1\tx" } } },
+          { functionResponse: { id: "abc", name: "view_file", response: { error: "Error: no" } } },
+        ],
+      },
+    ]);
+  });
+
+  it("rebuilds tool calls from another provider as functionCall parts", () => {
+    const p = new GeminiClient(base, fakeClient([])).buildParams({
+      system: "",
+      messages: [{ role: "assistant", content: "", toolCalls: [{ id: "toolu_1", name: "view_file", input: { path: "a" } }] }],
+    });
+    expect(p.contents).toEqual([{ role: "model", parts: [{ functionCall: { id: "toolu_1", name: "view_file", args: { path: "a" } } }] }]);
+  });
+});

@@ -1,11 +1,16 @@
+import { statSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
+import path from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { runAgent, type AgentResult } from "../agent/loop.js";
+import { agentSystemPrompt } from "../agent/prompt.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
-import { ModelError, type Message, type ModelClient } from "../model/index.js";
+import type { Message, ModelClient, ToolCall } from "../model/index.js";
+import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
-const HELP = `Type a message to chat with the model, or a command:
-  /repo <url>        set the GitHub repository to work on
+const HELP = `Type a request about the code in the working directory, or a command:
+  /repo <dir|url>    work in a local directory, or set the GitHub repository
   /fix <n|url|text>  fix an issue number, issue URL or described bug
   /cost              tokens and cost so far this session
   /clear             start a new conversation
@@ -14,23 +19,46 @@ const HELP = `Type a message to chat with the model, or a command:
   /exit              quit
 Ctrl-C cancels a reply in progress.`;
 
-/** Kept identical across requests so providers can cache it. */
-const CHAT_SYSTEM =
-  "You are AI Harness, a coding assistant running in a terminal. Answer concisely. " +
-  "You cannot read or change files or run commands yet.";
-
 export interface ReplOptions {
   config: HarnessConfig;
   model: ModelClient;
   tracker: UsageTracker;
+  /** GitHub URL or local directory. */
   initialRepo?: string;
+  /** Directory the tools work in when no local repository is given (default: current directory). */
+  workdir?: string;
+  tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
 }
 
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** e.g. view_file(path=src/index.ts, start_line=10) */
+export function describeCall(call: ToolCall): string {
+  const input = call.input && typeof call.input === "object" ? (call.input as Record<string, unknown>) : {};
+  const args = Object.entries(input)
+    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join(", ");
+  const text = `${call.name}(${call.rawInput !== undefined ? "<invalid JSON>" : args})`.replace(/\s+/g, " ");
+  return text.length > 120 ? `${text.slice(0, 119)}…` : text;
+}
+
+const STATUS_NOTES: Partial<Record<AgentResult["status"], string>> = {
+  max_tokens: "(reply cut off at max_output_tokens)",
+  refusal: "(the model declined to answer)",
+  cancelled: "(cancelled)",
+};
+
 /**
- * Interactive session. Replaced by the full TUI in Phase 6; the agent behind
- * /fix arrives in Phase 3.
+ * Interactive session. Replaced by the full TUI in Phase 6; the /fix
+ * workflow arrives in Phase 3.
  */
 export async function startRepl(opts: ReplOptions): Promise<void> {
   const { config, model, tracker } = opts;
@@ -41,7 +69,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const print = (s = "") => output.write(`${s}\n`);
 
   const rl = createInterface({ input, output, terminal: tty && Boolean((input as { isTTY?: boolean }).isTTY) });
+  const tools = opts.tools ?? createDefaultTools();
   let repo = opts.initialRepo;
+  let workdir = path.resolve(repo && isDirectory(repo) ? repo : (opts.workdir ?? process.cwd()));
   let history: Message[] = [];
   let inFlight: AbortController | undefined;
 
@@ -60,35 +90,64 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   });
 
   async function send(text: string): Promise<void> {
-    const pending: Message[] = [...history, { role: "user", content: text }];
     inFlight = new AbortController();
+    const started = Date.now();
+    // Tool lines must start on a fresh line even if streamed text didn't end with one.
+    let atLineStart = true;
+    const write = (s: string) => {
+      if (!s) return;
+      output.write(s);
+      atLineStart = s.endsWith("\n");
+    };
+    const line = (s: string) => {
+      if (!atLineStart) output.write("\n");
+      print(s);
+      atLineStart = true;
+    };
+
     output.write("\n");
     try {
-      const res = await model.chat({
-        system: CHAT_SYSTEM,
-        messages: pending,
+      const result = await runAgent({
+        model,
+        tools,
+        system: agentSystemPrompt(workdir),
+        root: workdir,
+        tracker,
+        limits: config.limits,
+        history,
+        task: text,
         signal: inFlight.signal,
-        onText: (d) => output.write(d),
+        events: {
+          onText: write,
+          onToolCall: (call) => line(dim(`  → ${describeCall(call)}`)),
+          onToolResult: (r) => {
+            if (r.isError) line(dim(`    ✗ ${r.content.split("\n")[0]}`));
+          },
+        },
       });
-      history = [...pending, res.message];
-      const cost = tracker.add(res.usage, res.model);
-      print();
-      if (res.stopReason === "max_tokens") print("(reply cut off at max_output_tokens)");
-      if (res.stopReason === "refusal") print("(the model declined to answer)");
-      print(dim(`[${res.model} · ${(res.durationMs / 1000).toFixed(1)}s · ${formatUsage(res.usage, cost)}]`));
-    } catch (err) {
-      // The failed turn is not added to history, so the next message starts clean.
-      print();
-      if (err instanceof ModelError && err.kind === "aborted") print("(cancelled)");
-      else if (err instanceof ModelError) print(`Model error: ${err.message}`);
-      else throw err;
+
+      // A run that failed before any reply leaves no trace, so the next message starts clean.
+      if (!(result.steps === 0 && (result.status === "error" || result.status === "cancelled"))) history = result.messages;
+
+      if (!atLineStart) output.write("\n");
+      if (result.status === "error" && result.error) print(`Model error: ${result.error.message}`);
+      if (result.status === "max_steps") print(`(stopped: reached limits.max_steps = ${config.limits.maxSteps})`);
+      if (result.status === "budget") print(`(stopped: reached the $${config.limits.maxCostUsd.toFixed(2)} cost limit per task)`);
+      const note = STATUS_NOTES[result.status];
+      if (note) print(note);
+      if (result.steps > 0) {
+        const steps = result.steps === 1 ? "1 step" : `${result.steps} steps`;
+        const cost = result.costIncomplete ? undefined : result.costUsd;
+        print(dim(`[${model.model} · ${steps} · ${((Date.now() - started) / 1000).toFixed(1)}s · ${formatUsage(result.usage, cost)}]`));
+      }
     } finally {
       inFlight = undefined;
     }
   }
 
   print(HELP);
-  if (repo) print(`\nRepository: ${repo}`);
+  print(`\nWorking directory: ${workdir}`);
+  if (repo && !isDirectory(repo)) print(`Repository: ${repo}`);
 
   // Async iteration (not rl.question) so lines piped in before the prompt
   // appears are queued instead of dropped. The loop ends on EOF / Ctrl-D.
@@ -132,7 +191,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           break;
         case "/repo":
           if (!arg) {
-            print(repo ? `Repository: ${repo}` : "Usage: /repo <github url>");
+            print(`Working directory: ${workdir}${repo && !isDirectory(repo) ? `\nRepository: ${repo}` : ""}`);
+          } else if (isDirectory(arg)) {
+            repo = arg;
+            workdir = path.resolve(arg);
+            history = []; // earlier tool results refer to the old directory
+            print(`Working directory: ${workdir} (new conversation)`);
           } else {
             repo = arg;
             print(`Repository set: ${repo}`);
