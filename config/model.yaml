@@ -47,3 +47,17 @@ defaults:
   openai: gpt-5
   gemini: gemini-2.5-pro
   groq: openai/gpt-oss-120b
+
+# USD per 1 million tokens, used for cost tracking and limits.max_cost_usd.
+# A model name also matches dated versions (gpt-5 matches gpt-5-2025-08-07).
+# Unlisted models still run; their cost is shown as unknown.
+# cache_read / cache_write default to the input price when left out.
+pricing:
+  claude-fable-5-2:  { input: 8.00, output: 40.00, cache_read: 0.20, cache_write: 10.00 }
+  claude-opus-5-5:   { input: 4.00, output: 20.00, cache_read: 0.20, cache_write: 5.00 }
+  claude-sonnet-5-5: { input: 2.00, output: 10.00, cache_read: 0.10, cache_write: 2.50 }
+  claude-haiku-5-5:  { input: 0.10, output: 0.50,  cache_read: 0.01, cache_write: 0.125 }
+  # Not verified against current price lists. Check before relying on them.
+  gpt-5:               { input: 1.25, output: 10.00, cache_read: 0.125 }
+  gemini-2.5-pro:      { input: 1.25, output: 10.00, cache_read: 0.31 }
+  openai/gpt-oss-120b: { input: 0.15, output: 0.75 }

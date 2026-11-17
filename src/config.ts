@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import type { PriceTable } from "./model/cost.js";
 import {
   DEFAULT_BASE_URLS,
   PROVIDERS,
@@ -40,6 +41,8 @@ export interface HarnessConfig {
     requestTimeoutS: number;
     maxRetries: number;
   };
+  /** USD per 1M tokens, keyed by model name. */
+  pricing: PriceTable;
 }
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -139,7 +142,26 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
       requestTimeoutS: optionalNumber(limits, "request_timeout_s", 1, 3600) ?? 300,
       maxRetries: optionalNumber(limits, "max_retries", 0, 10) ?? 3,
     },
+    pricing: readPricing(optionalObject(file, "pricing") ?? {}),
   };
+}
+
+function readPricing(raw: Obj): PriceTable {
+  const table: PriceTable = {};
+  for (const [model, value] of Object.entries(raw)) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new ConfigError(`pricing.${model} must be a mapping like { input: 1.0, output: 5.0 }.`);
+    }
+    const p = value as Obj;
+    const num = (key: string) => optionalNumber(p, key, 0, 10_000);
+    const input = num("input");
+    const output = num("output");
+    if (input === undefined || output === undefined) {
+      throw new ConfigError(`pricing.${model} needs both 'input' and 'output'.`);
+    }
+    table[model] = { input, output, cacheRead: num("cache_read") ?? input, cacheWrite: num("cache_write") ?? input };
+  }
+  return table;
 }
 
 /** A printable summary that never includes the API key. */
