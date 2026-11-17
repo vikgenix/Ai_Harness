@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tools, `view_file`, `list_dir`, `search`, `find_files`, `edit_file` and `create_file`, are in; more tools are added one at a time. See [Roadmap](#roadmap).
+> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tools, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file` and `bash`, are in; more tools are added one at a time. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -91,6 +91,7 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 | `find_files` | Finds files by name or path: a glob (`*.py`, `tests/**/test_*.ts`, `*.{js,ts}`) or plain text matched anywhere in the path, ignoring case (`config`). Skips files ignored by git. Shows up to 200 paths. |
 | `edit_file` | Changes an existing file by replacing exact text (`old_string` → `new_string`). The text must be unique unless `replace_all` is set; a miss explains why (different indentation, copied line numbers). Keeps CRLF line endings and file permissions, writes atomically, never touches `.git/`. Returns the edited lines with their new numbers. |
 | `create_file` | Creates a new file (and missing parent directories). Never overwrites: an existing file is an error pointing to `edit_file`. Files starting with `#!` are made executable. Max 1 MB, never inside `.git/`. |
+| `bash` | Runs a shell command in the repository root (tests, builds, git status). Fresh shell per call, no input (prompts get EOF), timeout 120s by default (max 600s) that stops the whole process tree. Output keeps the first 10k and last 20k characters, without colour codes. API keys and tokens are removed from the command's environment. Refuses `sudo`, `git push`, `rm` outside the repo or of `.git`, `curl \| sh` and similar. This is a guard rail, not a sandbox: for untrusted repositories, run the harness in a container. |
 
 Safety and limits:
 
@@ -127,6 +128,7 @@ src/tools/            tools the agent can call
   find_files.ts       find files by glob or name
   edit_file.ts        exact find-and-replace edits
   create_file.ts      new files, never overwrites
+  bash.ts             shell commands: timeout, output cap, no secrets, refusals
   files.ts            file listing (git-aware) and glob matching, shared by tools
   paths.ts            keeps every path inside the working directory
 src/model/            provider-neutral model client
@@ -146,7 +148,7 @@ tests/                offline tests (vitest)
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
-| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file` · ⬜ `bash`, `finish` |
+| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash` · ⬜ `finish` |
 | 3 | `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |

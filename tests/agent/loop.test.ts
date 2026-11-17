@@ -82,7 +82,7 @@ describe("runAgent", () => {
       role: "tool",
       results: [{ callId: "t1", name: "view_file", content: "1\tprint('hi')", isError: false }],
     });
-    expect(requests[0]!.tools!.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file"]);
+    expect(requests[0]!.tools!.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash"]);
     expect(requests[1]!.tools).toEqual(requests[0]!.tools);
   });
 
