@@ -7,10 +7,11 @@ import { agentSystemPrompt } from "../agent/prompt.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
+import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
 const HELP = `Type a request about the code in the working directory, or a command:
-  /repo <dir|url>    work in a local directory, or set the GitHub repository
+  /repo <url|dir>    clone a repository (or open a local directory) to work in
   /fix <n|url|text>  fix an issue number, issue URL or described bug
   /cost              tokens and cost so far this session
   /clear             start a new conversation
@@ -23,10 +24,14 @@ export interface ReplOptions {
   config: HarnessConfig;
   model: ModelClient;
   tracker: UsageTracker;
-  /** GitHub URL or local directory. */
+  /** Repository URL (cloned at start) or local directory. */
   initialRepo?: string;
-  /** Directory the tools work in when no local repository is given (default: current directory). */
+  /** Directory the tools work in until a repository is opened (default: current directory). */
   workdir?: string;
+  /** Where clones are kept (default: workspaces/ in the harness directory). */
+  workspacesDir?: string;
+  /** Lets git clone private GitHub repositories. */
+  githubToken?: string;
   tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
@@ -70,8 +75,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   const rl = createInterface({ input, output, terminal: tty && Boolean((input as { isTTY?: boolean }).isTTY) });
   const tools = opts.tools ?? createDefaultTools();
-  let repo = opts.initialRepo;
-  let workdir = path.resolve(repo && isDirectory(repo) ? repo : (opts.workdir ?? process.cwd()));
+  let repo: string | undefined;
+  let workdir = path.resolve(opts.workdir ?? process.cwd());
   let history: Message[] = [];
   let inFlight: AbortController | undefined;
 
@@ -145,16 +150,51 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
-  print(HELP);
-  print(`\nWorking directory: ${workdir}`);
-  if (repo && !isDirectory(repo)) print(`Repository: ${repo}`);
+  /** Switches to a local directory, or clones a repository URL and switches to the clone. */
+  async function openRepo(target: string): Promise<void> {
+    if (isDirectory(target)) {
+      repo = target;
+      workdir = path.resolve(target);
+      history = []; // earlier tool results refer to the old directory
+      print(`Working directory: ${workdir} (new conversation)`);
+      return;
+    }
+    const spec = parseRepoUrl(target);
+    if (!spec) {
+      print(`'${target}' is not a directory or a repository URL (e.g. https://github.com/owner/repo or owner/repo).`);
+      return;
+    }
+    inFlight = new AbortController();
+    print(`Cloning ${spec.label}...`);
+    try {
+      const cloned = await cloneRepo(spec, { workspacesDir: opts.workspacesDir, githubToken: opts.githubToken, signal: inFlight.signal });
+      repo = target;
+      workdir = cloned.dir;
+      history = [];
+      print(cloned.reused ? "Using the existing clone (make clean removes it for a fresh copy)." : `Cloned in ${(cloned.durationMs / 1000).toFixed(1)}s.`);
+      print(`Working directory: ${workdir} (new conversation)`);
+    } catch (err) {
+      if (!(err instanceof CloneError)) throw err;
+      print(err.message);
+    } finally {
+      inFlight = undefined;
+    }
+  }
 
-  // Async iteration (not rl.question) so lines piped in before the prompt
-  // appears are queued instead of dropped. The loop ends on EOF / Ctrl-D.
+  // Async iteration (not rl.question) so lines typed or piped in before the
+  // prompt appears are queued instead of dropped. Started before the initial
+  // clone, which can take a while. The loop ends on EOF / Ctrl-D.
+  const lines = rl[Symbol.asyncIterator]();
+
+  print(HELP);
+  print();
+  if (opts.initialRepo) await openRepo(opts.initialRepo);
+  else print(`Working directory: ${workdir}`);
+
   rl.setPrompt("\nharness › ");
   prompt();
   try {
-    for await (const raw of rl) {
+    for await (const raw of lines) {
       const line = raw.trim();
       if (!line) {
         prompt();
@@ -190,20 +230,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           print("Started a new conversation.");
           break;
         case "/repo":
-          if (!arg) {
-            print(`Working directory: ${workdir}${repo && !isDirectory(repo) ? `\nRepository: ${repo}` : ""}`);
-          } else if (isDirectory(arg)) {
-            repo = arg;
-            workdir = path.resolve(arg);
-            history = []; // earlier tool results refer to the old directory
-            print(`Working directory: ${workdir} (new conversation)`);
-          } else {
-            repo = arg;
-            print(`Repository set: ${repo}`);
-          }
+          if (!arg) print(`Working directory: ${workdir}${repo && !isDirectory(repo) ? `\nRepository: ${repo}` : ""}`);
+          else await openRepo(arg);
           break;
         case "/fix":
-          if (!repo) print("Set a repository first: /repo <github url>");
+          if (!repo) print("Open a repository first: /repo <url>");
           else if (!arg) print("Usage: /fix <issue number | issue url | description>");
           else print(`Not implemented yet: the agent that fixes "${arg}" arrives in Phase 3.`);
           break;

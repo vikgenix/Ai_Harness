@@ -64,6 +64,7 @@ async function main(): Promise<number> {
     model: createModelClient(config),
     tracker: new UsageTracker(config.pricing),
     initialRepo: args.repo,
+    githubToken: process.env.GITHUB_TOKEN || undefined,
   });
   return 0;
 }

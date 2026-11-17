@@ -7,6 +7,7 @@ import { loadConfig } from "../src/config.js";
 import { UsageTracker } from "../src/model/cost.js";
 import { ModelError, type ChatRequest, type ChatResponse, type ModelClient } from "../src/model/index.js";
 import { startRepl } from "../src/ui/repl.js";
+import { makeSourceRepo } from "./helpers.js";
 
 const config = loadConfig({ env: { AI_API_KEY: "sk-ant-fake" } });
 
@@ -101,12 +102,53 @@ describe("interactive session", () => {
 
   it("keeps the slash commands working without calling the model", async () => {
     const { model, requests } = fakeModel();
-    const { out } = await run(["/fix 3", "/repo https://github.com/o/r", "/fix 3", "/bogus"], model);
-    expect(out).toContain("Set a repository first");
-    expect(out).toContain("Repository set: https://github.com/o/r");
-    expect(out).toContain("arrives in Phase 3");
+    const { out } = await run(["/fix 3", "/repo not-a-repo", "/bogus"], model);
+    expect(out).toContain("Open a repository first: /repo <url>");
+    expect(out).toContain("'not-a-repo' is not a directory or a repository URL");
     expect(out).toContain("Unknown command '/bogus'");
     expect(requests).toHaveLength(0);
+  });
+
+  it("/repo <url> clones the repository and works in the clone", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
+    try {
+      const url = await makeSourceRepo(path.join(dir, "demo"));
+      const workspacesDir = path.join(dir, "ws");
+      const { model, requests } = fakeModel();
+      const input = new PassThrough();
+      const output = new PassThrough();
+      let out = "";
+      output.on("data", (d) => (out += d.toString()));
+      input.end(["hello", `/repo ${url}`, "what is here?", `/repo ${url}`, "/fix 3", "/exit"].map((l) => `${l}\n`).join(""));
+      await startRepl({ config, model, tracker: new UsageTracker(config.pricing), input, output, workspacesDir });
+
+      const clone = path.join(workspacesDir, "local__demo");
+      expect(out).toContain("Cloning local/demo...");
+      expect(out).toMatch(/Cloned in \d+\.\ds\./);
+      expect(out).toContain(`Working directory: ${clone} (new conversation)`);
+      expect(out).toContain("Using the existing clone");
+      expect(out).toContain("arrives in Phase 3");
+      expect(requests[1]!.system).toContain(clone);
+      expect(requests[1]!.messages).toEqual([{ role: "user", content: "what is here?" }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("clones the starting repository before reading input", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
+    try {
+      const url = await makeSourceRepo(path.join(dir, "demo"));
+      const { model, requests } = fakeModel();
+      const input = new PassThrough();
+      const output = new PassThrough();
+      input.end("hi\n/exit\n"); // already waiting before the clone finishes
+      await startRepl({ config, model, tracker: new UsageTracker(config.pricing), input, output, initialRepo: url, workspacesDir: path.join(dir, "ws") });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.system).toContain(path.join(dir, "ws", "local__demo"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("runs tools in the working directory and shows each call", async () => {
@@ -145,7 +187,7 @@ describe("interactive session", () => {
       expect(out).toContain("It prints hi.");
       expect(out).toMatch(/\[claude-opus-5-5 · 3 steps · /);
       expect(requests[0]!.system).toContain(dir.split(path.sep).pop()!);
-      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search"]);
+      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file"]);
       expect(requests[1]!.messages[2]).toMatchObject({ role: "tool", results: [{ content: "1\tprint('hi')" }] });
     } finally {
       await rm(dir, { recursive: true, force: true });

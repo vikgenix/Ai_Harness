@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tools, `view_file`, `list_dir` and `search`, are in; more tools are added one at a time. See [Roadmap](#roadmap).
+> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tools, `view_file`, `list_dir`, `search`, `find_files` and `edit_file`, are in; more tools are added one at a time. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -16,14 +16,21 @@ make run                         # starts the interactive harness
 Inside the harness, type a request about the code in the working directory (by default the directory you started in), or use a command:
 
 ```
-/repo ../some/local/project   # work in a local directory
-/repo https://github.com/owner/project
+/repo https://github.com/owner/project   # clone it and work in the clone
+/repo owner/project                      # same, GitHub shorthand
+/repo ../some/local/project              # work in a local directory as-is
 /fix 123                      # fix issue #123
 /fix "parser crashes on empty input"
 /cost                         # tokens and cost so far
 /clear                        # start a new conversation
 /config                       # show provider and model
 ```
+
+`make run REPO=https://github.com/owner/project` clones the repository at start.
+
+### Cloning
+
+`/repo <url>` makes a shallow clone (`--depth 1`) in `workspaces/<owner>__<repo>` and switches to it, so the original is never touched. Opening the same URL again reuses the clone; `make clean` removes all clones. GitHub (`https://`, `owner/repo`, `git@github.com:...`), GitLab, Bitbucket and `file://` URLs are accepted. Git never prompts for a password: a private repository fails with a clear message unless `GITHUB_TOKEN` is set. Ctrl-C cancels a clone.
 
 Without the UI: `make run REPO=<url> ISSUE=123` or `make run REPO=<url> TASK="..."`.
 
@@ -81,6 +88,8 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 | `view_file` | Reads a file with line numbers. Shows up to 400 lines unless given a range (max 1000), cuts very long lines, and skips binary files. |
 | `list_dir` | Shows a directory as a tree with file sizes, 2 levels deep by default (max 5). Lists `.git`, `node_modules`, caches and build output without opening them. Symlinks are shown, never followed. |
 | `search` | Searches file contents like grep: regex or plain text, optional glob (`*.py`, `src/**/*.{js,ts}`), case-insensitive, context lines. In a git repo, files ignored by `.gitignore` are skipped. Shows up to 100 matches. |
+| `find_files` | Finds files by name or path: a glob (`*.py`, `tests/**/test_*.ts`, `*.{js,ts}`) or plain text matched anywhere in the path, ignoring case (`config`). Skips files ignored by git. Shows up to 200 paths. |
+| `edit_file` | Changes an existing file by replacing exact text (`old_string` → `new_string`). The text must be unique unless `replace_all` is set; a miss explains why (different indentation, copied line numbers). Keeps CRLF line endings and file permissions, writes atomically, never touches `.git/`. Returns the edited lines with their new numbers. |
 
 Safety and limits:
 
@@ -91,7 +100,7 @@ Safety and limits:
 
 ## Optional: GitHub access
 
-Set `GITHUB_TOKEN` to let the harness push branches, open pull requests and post issues. Without it, the harness still clones, fixes and commits locally and saves the patch.
+Set `GITHUB_TOKEN` to clone private repositories (the token is passed to git for that command only, never saved in the clone), and later to push branches, open pull requests and post issues. Without it, the harness still clones, fixes and commits locally and saves the patch.
 
 ## Security
 
@@ -107,12 +116,15 @@ src/index.ts          entry point
 src/config.ts         loads and validates config; reads AI_API_KEY
 src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
+src/repo/clone.ts     parses repository URLs, clones into workspaces/
 src/agent/            agent loop (model → tools → model ...) and system prompt
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
   view_file.ts        reads files with line numbers
   list_dir.ts         directory tree with sizes
   search.ts           grep-style content search
+  find_files.ts       find files by glob or name
+  edit_file.ts        exact find-and-replace edits
   files.ts            file listing (git-aware) and glob matching, shared by tools
   paths.ts            keeps every path inside the working directory
 src/model/            provider-neutral model client
@@ -132,7 +144,7 @@ tests/                offline tests (vitest)
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
-| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search` · ⬜ `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
+| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file` · ⬜ `create_file`, `bash`, `finish` |
 | 3 | `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
