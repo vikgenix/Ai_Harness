@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tool, `view_file`, is in; more tools are added one at a time. See [Roadmap](#roadmap).
+> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tools, `view_file` and `list_dir`, are in; more tools are added one at a time. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -79,6 +79,7 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 | Tool | What it does |
 |---|---|
 | `view_file` | Reads a file with line numbers. Shows up to 400 lines unless given a range (max 1000), cuts very long lines, and skips binary files. |
+| `list_dir` | Shows a directory as a tree with file sizes, 2 levels deep by default (max 5). Lists `.git`, `node_modules`, caches and build output without opening them. Symlinks are shown, never followed. |
 
 Safety and limits:
 
@@ -109,6 +110,7 @@ src/agent/            agent loop (model → tools → model ...) and system prom
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
   view_file.ts        reads files with line numbers
+  list_dir.ts         directory tree with sizes
   paths.ts            keeps every path inside the working directory
 src/model/            provider-neutral model client
   types.ts            messages, tool calls, usage, ModelClient interface
@@ -127,7 +129,7 @@ tests/                offline tests (vitest)
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
-| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file` · ⬜ `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
+| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir` · ⬜ `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 | `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
