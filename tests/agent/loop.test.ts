@@ -47,6 +47,7 @@ function scripted(steps: Step[]) {
 }
 
 const view = (id: string, file = "hello.py") => ({ id, name: "view_file", input: { path: file } });
+const finishCall = (id: string, outcome = "completed", summary = "Changed hello.py; tests pass.") => ({ id, name: "finish", input: { outcome, summary } });
 
 function options(model: ModelClient, extra: Partial<AgentOptions> = {}): AgentOptions {
   return {
@@ -82,7 +83,7 @@ describe("runAgent", () => {
       role: "tool",
       results: [{ callId: "t1", name: "view_file", content: "1\tprint('hi')", isError: false }],
     });
-    expect(requests[0]!.tools!.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash"]);
+    expect(requests[0]!.tools!.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash", "finish"]);
     expect(requests[1]!.tools).toEqual(requests[0]!.tools);
   });
 
@@ -135,6 +136,35 @@ describe("runAgent", () => {
     const result = await runAgent(options(model));
     expect(result.status).toBe("done");
     expect(requests).toHaveLength(2);
+  });
+
+  it("stops when the model calls finish, with its summary", async () => {
+    const { model, requests } = scripted([{ toolCalls: [view("t1")] }, { content: "Done.", toolCalls: [finishCall("f1")] }, { content: "never asked" }]);
+    const result = await runAgent(options(model));
+    expect(result.status).toBe("finished");
+    expect(result.finished).toEqual({ outcome: "completed", summary: "Changed hello.py; tests pass." });
+    expect(result.finalText).toBe("Changed hello.py; tests pass.");
+    expect(requests).toHaveLength(2);
+    // Ends with an assistant turn, so a follow-up message can be sent on any provider.
+    expect(result.messages.slice(-2).map((m) => m.role)).toEqual(["tool", "assistant"]);
+  });
+
+  it("refuses finish called together with other tools, and keeps going", async () => {
+    const { model, requests } = scripted([{ toolCalls: [view("t1"), finishCall("f1")] }, { toolCalls: [finishCall("f2", "blocked", "Tests fail.")] }]);
+    const result = await runAgent(options(model));
+    expect(requests[1]!.messages[2]).toMatchObject({
+      role: "tool",
+      results: [{ callId: "t1", isError: false }, { callId: "f1", isError: true, content: expect.stringContaining("call finish on its own") }],
+    });
+    expect(result.status).toBe("finished");
+    expect(result.finished?.outcome).toBe("blocked");
+  });
+
+  it("keeps going when finish is called with invalid input", async () => {
+    const { model } = scripted([{ toolCalls: [{ id: "f1", name: "finish", input: { outcome: "maybe", summary: "x" } }] }, { content: "ok" }]);
+    const result = await runAgent(options(model));
+    expect(result.status).toBe("done");
+    expect(result.messages[2]).toMatchObject({ role: "tool", results: [{ isError: true }] });
   });
 
   it("reports model errors and cancellation as a status", async () => {

@@ -4,7 +4,9 @@ import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { runAgent, type AgentResult } from "../agent/loop.js";
 import { agentSystemPrompt } from "../agent/prompt.js";
+import { describeTask, resolveTask, taskPrompt } from "../agent/task.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
+import { GitHubError } from "../github/issues.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
@@ -30,8 +32,10 @@ export interface ReplOptions {
   workdir?: string;
   /** Where clones are kept (default: workspaces/ in the harness directory). */
   workspacesDir?: string;
-  /** Lets git clone private GitHub repositories. */
+  /** Lets git clone private GitHub repositories and read their issues. */
   githubToken?: string;
+  /** For tests: replaces the GitHub API's fetch. */
+  fetchImpl?: typeof fetch;
   tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
@@ -135,6 +139,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (!(result.steps === 0 && (result.status === "error" || result.status === "cancelled"))) history = result.messages;
 
       if (!atLineStart) output.write("\n");
+      if (result.finished) {
+        const label = result.finished.outcome === "completed" ? "✓ Done" : "✗ Blocked";
+        print(`\n${label}: ${result.finished.summary}`);
+      }
       if (result.status === "error" && result.error) print(`Model error: ${result.error.message}`);
       if (result.status === "max_steps") print(`(stopped: reached limits.max_steps = ${config.limits.maxSteps})`);
       if (result.status === "budget") print(`(stopped: reached the $${config.limits.maxCostUsd.toFixed(2)} cost limit per task)`);
@@ -179,6 +187,23 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     } finally {
       inFlight = undefined;
     }
+  }
+
+  /** /fix: turns the argument into a task (fetching the issue if it is one) and runs the agent on it. */
+  async function fix(arg: string): Promise<void> {
+    inFlight = new AbortController();
+    let task;
+    try {
+      task = await resolveTask(arg, workdir, { token: opts.githubToken, signal: inFlight.signal, fetchImpl: opts.fetchImpl });
+    } catch (err) {
+      if (!(err instanceof GitHubError)) throw err;
+      print(err.message);
+      return;
+    } finally {
+      inFlight = undefined;
+    }
+    print(describeTask(task));
+    await send(taskPrompt(task));
   }
 
   // Async iteration (not rl.question) so lines typed or piped in before the
@@ -236,7 +261,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         case "/fix":
           if (!repo) print("Open a repository first: /repo <url>");
           else if (!arg) print("Usage: /fix <issue number | issue url | description>");
-          else print(`Not implemented yet: the agent that fixes "${arg}" arrives in Phase 3.`);
+          else await fix(arg);
           break;
         default:
           print(`Unknown command '${cmd}'. Type /help.`);

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -127,9 +128,39 @@ describe("interactive session", () => {
       expect(out).toMatch(/Cloned in \d+\.\ds\./);
       expect(out).toContain(`Working directory: ${clone} (new conversation)`);
       expect(out).toContain("Using the existing clone");
-      expect(out).toContain("arrives in Phase 3");
+      expect(out).toContain("'3' is an issue number, but the working directory is not a GitHub clone");
       expect(requests[1]!.system).toContain(clone);
       expect(requests[1]!.messages).toEqual([{ role: "user", content: "what is here?" }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("/fix <n> fetches the issue of the clone's GitHub repository and gives it to the agent", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/widget.git"], { cwd: dir });
+      const fetched: string[] = [];
+      const fetchImpl = (async (url: string) => {
+        fetched.push(url);
+        return new Response(JSON.stringify({ title: "Crash on empty input", body: "Steps: run it", state: "open", comments: 0, labels: [] }), { status: 200 });
+      }) as typeof fetch;
+      const { model, requests } = fakeModel();
+      const input = new PassThrough();
+      const output = new PassThrough();
+      let out = "";
+      output.on("data", (d) => (out += d.toString()));
+      input.end([`/repo ${dir}`, "/fix 7", "/fix make the greeting louder", "/exit"].map((l) => `${l}\n`).join(""));
+      await startRepl({ config, model, tracker: new UsageTracker(config.pricing), input, output, fetchImpl });
+
+      expect(fetched).toEqual(["https://api.github.com/repos/acme/widget/issues/7"]);
+      expect(out).toContain("Issue acme/widget#7: Crash on empty input (open, 0 comments)");
+      const first = requests[0]!.messages[0]!;
+      expect(first.role === "user" && first.content).toContain("<issue>\n# Crash on empty input");
+      expect(out).toContain("Task: make the greeting louder");
+      const last = requests[1]!.messages[requests[1]!.messages.length - 1]!;
+      expect(last.role === "user" && last.content).toBe("Fix this in the repository:\n\nmake the greeting louder");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -187,11 +218,24 @@ describe("interactive session", () => {
       expect(out).toContain("It prints hi.");
       expect(out).toMatch(/\[claude-opus-5-5 · 3 steps · /);
       expect(requests[0]!.system).toContain(dir.split(path.sep).pop()!);
-      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash"]);
+      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash", "finish"]);
       expect(requests[1]!.messages[2]).toMatchObject({ role: "tool", results: [{ content: "1\tprint('hi')" }] });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("shows the finish summary", async () => {
+    const { model } = fakeModel(() => ({
+      message: { role: "assistant", content: "", toolCalls: [{ id: "f1", name: "finish", input: { outcome: "blocked", summary: "No tests found." } }] },
+      usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason: "tool_use",
+      model: "claude-opus-5-5",
+      durationMs: 1,
+    }));
+    const { out } = await run(["fix it", "/exit"], model);
+    expect(out).toContain("✗ Blocked: No tests found.");
+    expect(out).toMatch(/\[claude-opus-5-5 · 1 step · /);
   });
 
   it("/repo with a local directory switches the working directory and starts over", async () => {

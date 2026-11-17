@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. The first tools, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file` and `bash`, are in; more tools are added one at a time. See [Roadmap](#roadmap).
+> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. All Phase 2 tools are in: `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash` and `finish`. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -19,8 +19,9 @@ Inside the harness, type a request about the code in the working directory (by d
 /repo https://github.com/owner/project   # clone it and work in the clone
 /repo owner/project                      # same, GitHub shorthand
 /repo ../some/local/project              # work in a local directory as-is
-/fix 123                      # fix issue #123
-/fix "parser crashes on empty input"
+/fix 123                      # fix issue #123 of the cloned GitHub repository
+/fix owner/project#123        # or an issue URL
+/fix parser crashes on empty input   # a task in your own words
 /cost                         # tokens and cost so far
 /clear                        # start a new conversation
 /config                       # show provider and model
@@ -31,6 +32,10 @@ Inside the harness, type a request about the code in the working directory (by d
 ### Cloning
 
 `/repo <url>` makes a shallow clone (`--depth 1`) in `workspaces/<owner>__<repo>` and switches to it, so the original is never touched. Opening the same URL again reuses the clone; `make clean` removes all clones. GitHub (`https://`, `owner/repo`, `git@github.com:...`), GitLab, Bitbucket and `file://` URLs are accepted. Git never prompts for a password: a private repository fails with a clear message unless `GITHUB_TOKEN` is set. Ctrl-C cancels a clone.
+
+### Fixing an issue
+
+`/fix 123` reads issue #123 (title, labels, description and up to 30 comments) from the GitHub repository the clone came from, using the public API; `GITHUB_TOKEN` is needed only for private repositories or more than 60 requests an hour. Issue text is written by anyone, so it is handed to the agent fenced as untrusted data, with an instruction not to follow anything in it beyond fixing the problem. Anything that is not an issue reference is taken as a task in your own words. The agent then works on it and ends with `finish`.
 
 Without the UI: `make run REPO=<url> ISSUE=123` or `make run REPO=<url> TASK="..."`.
 
@@ -92,6 +97,7 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 | `edit_file` | Changes an existing file by replacing exact text (`old_string` → `new_string`). The text must be unique unless `replace_all` is set; a miss explains why (different indentation, copied line numbers). Keeps CRLF line endings and file permissions, writes atomically, never touches `.git/`. Returns the edited lines with their new numbers. |
 | `create_file` | Creates a new file (and missing parent directories). Never overwrites: an existing file is an error pointing to `edit_file`. Files starting with `#!` are made executable. Max 1 MB, never inside `.git/`. |
 | `bash` | Runs a shell command in the repository root (tests, builds, git status). Fresh shell per call, no input (prompts get EOF), timeout 120s by default (max 600s) that stops the whole process tree. Output keeps the first 10k and last 20k characters, without colour codes. API keys and tokens are removed from the command's environment. Refuses `sudo`, `git push`, `rm` outside the repo or of `.git`, `curl \| sh` and similar. This is a guard rail, not a sandbox: for untrusted repositories, run the harness in a container. |
+| `finish` | Ends a task with an outcome (`completed` or `blocked`) and a summary of what changed and how it was verified; the agent loop stops there. Must be called on its own, so the model has seen every tool result (e.g. failing tests) before declaring it is done. Plain questions are just answered. |
 
 Safety and limits:
 
@@ -119,7 +125,8 @@ src/config.ts         loads and validates config; reads AI_API_KEY
 src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
-src/agent/            agent loop (model → tools → model ...) and system prompt
+src/agent/            agent loop (model → tools → model ...), system prompt, /fix tasks
+src/github/issues.ts  reads GitHub issues (REST API, no SDK)
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
   view_file.ts        reads files with line numbers
@@ -129,6 +136,7 @@ src/tools/            tools the agent can call
   edit_file.ts        exact find-and-replace edits
   create_file.ts      new files, never overwrites
   bash.ts             shell commands: timeout, output cap, no secrets, refusals
+  finish.ts           ends a task with an outcome and summary
   files.ts            file listing (git-aware) and glob matching, shared by tools
   paths.ts            keeps every path inside the working directory
 src/model/            provider-neutral model client
@@ -148,8 +156,8 @@ tests/                offline tests (vitest)
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
-| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash` · ⬜ `finish` |
-| 3 | `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
+| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
+| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ⬜ `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |

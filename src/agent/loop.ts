@@ -1,6 +1,7 @@
 import type { UsageTracker } from "../model/cost.js";
 import { ModelError } from "../model/errors.js";
 import { emptyUsage, type ChatResponse, type Message, type ModelClient, type ToolCall, type ToolResult, type Usage } from "../model/types.js";
+import { FINISH_TOOL, type FinishInput } from "../tools/finish.js";
 import type { ToolRegistry } from "../tools/registry.js";
 
 /** How many times a turn is re-sent when the model's output can't be parsed. */
@@ -8,6 +9,7 @@ const MAX_INVALID_OUTPUT_RETRIES = 2;
 
 export type AgentStatus =
   | "done" // the model answered without asking for more tools
+  | "finished" // the model called the finish tool
   | "max_steps" // limits.max_steps reached
   | "budget" // limits.max_cost_usd reached
   | "max_tokens" // the reply hit the output limit
@@ -50,8 +52,10 @@ export interface AgentResult {
   costUsd: number;
   /** True if a model without a price was used, so costUsd is incomplete. */
   costIncomplete: boolean;
-  /** Text of the last reply. */
+  /** Text of the last reply, or the finish summary. */
   finalText: string;
+  /** Set when the model ended the task with the finish tool. */
+  finished?: FinishInput;
   error?: ModelError;
 }
 
@@ -69,21 +73,21 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
   let steps = 0;
   let finalText = "";
 
-  const finish = (status: AgentStatus, error?: ModelError): AgentResult => {
+  const end = (status: AgentStatus, error?: ModelError, finished?: FinishInput): AgentResult => {
     closeOpenCalls(messages, status);
-    return { status, messages, steps, usage, costUsd, costIncomplete, finalText, error };
+    return { status, messages, steps, usage, costUsd, costIncomplete, finalText, error, ...(finished ? { finished } : {}) };
   };
 
   while (true) {
-    if (steps >= limits.maxSteps) return finish("max_steps");
-    if (costUsd >= limits.maxCostUsd) return finish("budget");
+    if (steps >= limits.maxSteps) return end("max_steps");
+    if (costUsd >= limits.maxCostUsd) return end("budget");
 
     let res: ChatResponse;
     try {
       res = await chatWithRetry(model, { system: opts.system, messages, tools: specs, signal, onText: events?.onText });
     } catch (err) {
       if (!(err instanceof ModelError)) throw err;
-      return finish(err.kind === "aborted" ? "cancelled" : "error", err.kind === "aborted" ? undefined : err);
+      return end(err.kind === "aborted" ? "cancelled" : "error", err.kind === "aborted" ? undefined : err);
     }
 
     steps++;
@@ -97,20 +101,33 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
     const calls = res.message.toolCalls ?? [];
     // A cut-off or refused reply may hold incomplete tool input: never run it.
-    if (res.stopReason === "refusal") return finish("refusal");
-    if (res.stopReason === "max_tokens") return finish("max_tokens");
-    if (calls.length === 0) return finish("done");
+    if (res.stopReason === "refusal") return end("refusal");
+    if (res.stopReason === "max_tokens") return end("max_tokens");
+    if (calls.length === 0) return end("done");
 
     const results: ToolResult[] = [];
     for (const call of calls) {
       events?.onToolCall?.(call);
       const started = Date.now();
-      const result = await tools.run(call, { root: opts.root, signal });
+      const result =
+        call.name === FINISH_TOOL && calls.length > 1
+          ? // The model has not seen the other results yet (e.g. failing tests), so it cannot know it is done.
+            { callId: call.id, name: call.name, content: "Error: call finish on its own, after you have seen the results of your other tool calls", isError: true }
+          : await tools.run(call, { root: opts.root, signal });
       results.push(result);
       events?.onToolResult?.(result, Date.now() - started);
     }
     messages.push({ role: "tool", results });
-    if (signal?.aborted) return finish("cancelled");
+    if (signal?.aborted) return end("cancelled");
+
+    const done = results.find((r) => r.name === FINISH_TOOL && !r.isError);
+    if (done) {
+      const finished = calls.find((c) => c.id === done.callId)!.input as FinishInput;
+      finalText = finished.summary;
+      // A closing assistant turn keeps the conversation valid for a follow-up message on every provider.
+      messages.push({ role: "assistant", content: finished.summary });
+      return end("finished", undefined, finished);
+    }
   }
 }
 
