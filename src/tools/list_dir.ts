@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir, readlink, stat } from "node:fs/promises";
 import path from "node:path";
+import { NOT_EXPANDED } from "./files.js";
 import { resolveInRoot } from "./paths.js";
 import { ToolError, type Tool } from "./types.js";
 
@@ -10,33 +11,6 @@ export const MAX_DEPTH = 5;
 export const MAX_PER_DIR = 100;
 /** Entries shown in total per call. */
 export const MAX_ENTRIES = 500;
-
-/**
- * Listed but never opened: version control data, dependencies, caches and
- * build output. They are large and rarely what the agent is looking for.
- */
-export const NOT_EXPANDED = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  "node_modules",
-  ".venv",
-  "venv",
-  "__pycache__",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".tox",
-  ".gradle",
-  ".idea",
-  ".next",
-  ".nuxt",
-  ".cache",
-  "target",
-  "dist",
-  "build",
-  "coverage",
-]);
 
 interface ListDirInput {
   path?: string;
