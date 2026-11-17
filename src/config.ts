@@ -27,6 +27,10 @@ export interface HarnessConfig {
   /** Never print this. Use describeConfig() for display. */
   apiKey: string;
   maxOutputTokens: number;
+  /** Reasoning depth; undefined leaves it to the provider. */
+  effort: Effort | undefined;
+  /** Anthropic: let the API retry a declined request on another model. */
+  refusalFallback: boolean;
   /** undefined when the provider does not accept the setting. */
   temperature: number | undefined;
   seed: number | undefined;
@@ -34,8 +38,12 @@ export interface HarnessConfig {
     maxSteps: number;
     maxCostUsd: number;
     requestTimeoutS: number;
+    maxRetries: number;
   };
 }
+
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
 
 type Env = Record<string, string | undefined>;
 
@@ -107,6 +115,13 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
   const temperature = optionalNumber(file, "temperature", 0, 2) ?? 0;
   const seed = optionalNumber(file, "seed", 0, Number.MAX_SAFE_INTEGER) ?? 42;
 
+  const effortValue = optionalString(file, "effort");
+  if (effortValue !== undefined && !(EFFORTS as readonly string[]).includes(effortValue)) {
+    throw new ConfigError(`'effort' must be one of: ${EFFORTS.join(", ")} (or null).`);
+  }
+  const refusalFallback = file.refusal_fallback ?? true;
+  if (typeof refusalFallback !== "boolean") throw new ConfigError("'refusal_fallback' must be true or false.");
+
   return {
     provider,
     providerSource,
@@ -114,12 +129,15 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     baseUrl,
     apiKey,
     maxOutputTokens: optionalNumber(file, "max_output_tokens", 1, 1_000_000) ?? 16000,
+    effort: effortValue as Effort | undefined,
+    refusalFallback,
     temperature: SUPPORTS_TEMPERATURE[provider] ? temperature : undefined,
     seed: SUPPORTS_SEED[provider] ? seed : undefined,
     limits: {
       maxSteps: optionalNumber(limits, "max_steps", 1, 10_000) ?? 60,
       maxCostUsd: optionalNumber(limits, "max_cost_usd", 0.01, 10_000) ?? 2,
       requestTimeoutS: optionalNumber(limits, "request_timeout_s", 1, 3600) ?? 300,
+      maxRetries: optionalNumber(limits, "max_retries", 0, 10) ?? 3,
     },
   };
 }

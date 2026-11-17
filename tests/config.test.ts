@@ -110,6 +110,22 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/max_steps/);
   });
 
+  it("reads effort, refusal_fallback and max_retries with defaults", () => {
+    const defaults = loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } });
+    expect(defaults).toMatchObject({ effort: undefined, refusalFallback: true, limits: { maxRetries: 3 } });
+
+    const set = loadConfig({
+      configPath: yamlFile(`${BASE}\neffort: xhigh\nrefusal_fallback: false\nlimits:\n  max_retries: 0\n`),
+      env: { AI_API_KEY: "sk-fake" },
+    });
+    expect(set).toMatchObject({ effort: "xhigh", refusalFallback: false, limits: { maxRetries: 0 } });
+  });
+
+  it("rejects an invalid effort", () => {
+    const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
+    expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);
+  });
+
   it("reports a missing config file", () => {
     expect(() => loadConfig({ configPath: join(dir, "nope.yaml"), env: { AI_API_KEY: "sk-fake" } })).toThrow(
       /Config file not found/,

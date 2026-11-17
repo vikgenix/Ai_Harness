@@ -20,6 +20,15 @@ base_url: null
 
 max_output_tokens: 16000
 
+# How hard the model thinks: low | medium | high | xhigh | max, or null to
+# leave it to the provider. Higher fixes harder bugs but uses more tokens.
+# Translated per provider (Anthropic `effort`, OpenAI/Groq `reasoning_effort`).
+effort: high
+
+# Anthropic only: if a safety filter declines a request, let the API retry it
+# on another Claude model instead of stopping (server-side fallback).
+refusal_fallback: true
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0
@@ -29,6 +38,7 @@ limits:
   max_steps: 60          # tool-call rounds per task before the agent stops
   max_cost_usd: 2.00     # hard spending limit per task
   request_timeout_s: 300
+  max_retries: 3         # retries on rate limits, overload and network errors
 
 # Default model per provider. Check each provider's model list before an
 # official run; model names change often.
