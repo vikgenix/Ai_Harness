@@ -119,8 +119,14 @@ describe("toModelError (Gemini)", () => {
     expect(toModelError(api(status)).kind).toBe(kind);
   });
 
-  it("treats a 400 with API_KEY_INVALID as an auth error", () => {
-    expect(toModelError(api(400, '{"reason":"API_KEY_INVALID"}')).kind).toBe("auth");
+  it("treats a 400 with API_KEY_INVALID as an auth error, with a readable message", () => {
+    // Shape of the real response to an invalid key: JSON inside JSON.
+    const inner = JSON.stringify({
+      error: { code: 400, message: "API key not valid. Please pass a valid API key.", details: [{ reason: "API_KEY_INVALID" }] },
+    });
+    const e = toModelError(api(400, JSON.stringify({ error: { message: inner, code: 400 } })));
+    expect(e.kind).toBe("auth");
+    expect(e.detail).toBe("API key not valid. Please pass a valid API key.");
   });
 
   it("classifies aborts and network failures", () => {

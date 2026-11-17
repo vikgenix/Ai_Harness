@@ -155,18 +155,38 @@ function toStopReason(r: string | undefined): StopReason {
   }
 }
 
+/**
+ * Gemini error messages can be JSON with another JSON document inside its
+ * `message`. Dig out the innermost human-readable message.
+ */
+export function readableGeminiMessage(raw: string): string {
+  let text = raw;
+  for (let depth = 0; depth < 4; depth++) {
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: unknown } };
+      const inner = parsed?.error?.message;
+      if (typeof inner !== "string") break;
+      text = inner;
+    } catch {
+      break;
+    }
+  }
+  return text;
+}
+
 export function toModelError(err: unknown): ModelError {
   if (err instanceof ModelError) return err;
   const opts = { cause: err };
   if (err instanceof ApiError) {
     const s = err.status;
+    const detail = readableGeminiMessage(err.message);
     // An invalid key is a 400 with this reason code, not a 401.
-    if (s === 401 || s === 403 || err.message.includes("API_KEY_INVALID")) return new ModelError("auth", err.message, s, opts);
-    if (s === 404) return new ModelError("not_found", err.message, s, opts);
-    if (s === 429) return new ModelError("rate_limit", err.message, s, opts);
-    if (s === 400) return new ModelError("bad_request", err.message, s, opts);
-    if (s >= 500) return new ModelError("server", err.message, s, opts);
-    return new ModelError("unknown", err.message, s, opts);
+    if (s === 401 || s === 403 || err.message.includes("API_KEY_INVALID")) return new ModelError("auth", detail, s, opts);
+    if (s === 404) return new ModelError("not_found", detail, s, opts);
+    if (s === 429) return new ModelError("rate_limit", detail, s, opts);
+    if (s === 400) return new ModelError("bad_request", detail, s, opts);
+    if (s >= 500) return new ModelError("server", detail, s, opts);
+    return new ModelError("unknown", detail, s, opts);
   }
   if (err instanceof Error && err.name === "AbortError") return new ModelError("aborted", "", undefined, opts);
   if (err instanceof Error && err.name === "TimeoutError") return new ModelError("timeout", "", undefined, opts);

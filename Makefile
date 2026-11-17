@@ -20,10 +20,10 @@ WITH_NODE := PATH="$(CURDIR)/.tools/node/bin:$$PATH"
 
 RUN_ARGS := $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(if $(TASK),--task "$(TASK)")
 
-.PHONY: help setup run test clean check-key check-secrets clean-env-test
+.PHONY: help setup run ping test clean check-key check-secrets clean-env-test
 
 help:
-	@echo "Targets: setup | run | test | clean | clean-env-test"
+	@echo "Targets: setup | run | ping | test | clean | clean-env-test"
 	@echo "First:   export AI_API_KEY=\"<your key>\""
 
 setup:
@@ -36,6 +36,11 @@ setup:
 run: check-key
 	@test -f dist/index.js || { echo "Not built yet. Run: make setup" >&2; exit 1; }
 	@$(WITH_NODE) node dist/index.js $(RUN_ARGS)
+
+# One tiny request to check that the key, model and endpoint work.
+ping: check-key
+	@test -f dist/index.js || { echo "Not built yet. Run: make setup" >&2; exit 1; }
+	@$(WITH_NODE) node dist/index.js --ping
 
 test:
 	@echo "==> Running tests"

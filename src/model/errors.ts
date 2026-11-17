@@ -25,16 +25,27 @@ const HINTS: Record<ModelErrorKind, string> = {
   unknown: "Unexpected error from the provider.",
 };
 
+const MAX_DETAIL = 300;
+
+/** One line, at most MAX_DETAIL characters: provider messages can be long. */
+function tidy(detail: string): string {
+  const oneLine = detail.replace(/\s+/g, " ").trim();
+  return oneLine.length > MAX_DETAIL ? `${oneLine.slice(0, MAX_DETAIL - 1)}…` : oneLine;
+}
+
 export class ModelError extends Error {
   override name = "ModelError";
+  readonly detail: string;
 
   constructor(
     readonly kind: ModelErrorKind,
-    readonly detail: string,
+    detail: string,
     readonly status?: number,
     options?: { cause?: unknown },
   ) {
-    super(`${HINTS[kind]}${detail ? ` (${detail})` : ""}`, options);
+    const clean = tidy(detail);
+    super(`${HINTS[kind]}${clean ? ` (${clean})` : ""}`, options);
+    this.detail = clean;
   }
 
   /** Errors worth retrying (the SDKs already retry these a few times). */

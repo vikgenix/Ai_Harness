@@ -6,6 +6,7 @@ export interface CliArgs {
   task?: string;
   config?: string;
   check: boolean;
+  ping: boolean;
   help: boolean;
 }
 
@@ -21,7 +22,8 @@ Options (when calling node dist/index.js directly):
   --issue <n|url>    issue number or URL to fix
   --task <text>      free-text description of what to fix
   --config <path>    model config file (default: config/model.yaml)
-  --check            validate configuration and exit
+  --check            validate configuration and exit (no API call)
+  --ping             send one tiny request to check the key and model (make ping)
   -h, --help         show this help
 `;
 
@@ -36,6 +38,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       task: { type: "string" },
       config: { type: "string" },
       check: { type: "boolean", default: false },
+      ping: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -45,6 +48,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     task: values.task || undefined,
     config: values.config || undefined,
     check: values.check ?? false,
+    ping: values.ping ?? false,
     help: values.help ?? false,
   };
 }

@@ -148,6 +148,13 @@ describe("toModelError", () => {
     expect(toModelError(new Anthropic.APIUserAbortError()).kind).toBe("aborted");
   });
 
+  it("keeps error details to one short line", () => {
+    const e = new ModelError("server", `line one\n\n   line two ${"x".repeat(500)}`);
+    expect(e.detail).not.toContain("\n");
+    expect(e.detail.length).toBeLessThanOrEqual(300);
+    expect(e.detail.startsWith("line one line two")).toBe(true);
+  });
+
   it("marks only transient errors as retryable", () => {
     expect(toModelError(gen(429)).retryable).toBe(true);
     expect(toModelError(gen(401)).retryable).toBe(false);
