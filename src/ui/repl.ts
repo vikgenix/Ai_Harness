@@ -3,7 +3,8 @@ import { createInterface } from "node:readline/promises";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { runAgent, type AgentResult } from "../agent/loop.js";
-import { agentSystemPrompt } from "../agent/prompt.js";
+import { completeFix, FixError, startFix } from "../agent/fix.js";
+import { agentSystemPrompt, fixSystemPrompt } from "../agent/prompt.js";
 import { describeTask, resolveTask, taskPrompt } from "../agent/task.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
 import { GitHubError } from "../github/issues.js";
@@ -98,7 +99,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     else rl.close();
   });
 
-  async function send(text: string): Promise<void> {
+  /** Runs the agent on `text` and shows its progress. `mode` replaces the chat's system prompt and history (used by /fix). */
+  async function send(text: string, mode: { system?: string; history?: Message[] } = {}): Promise<AgentResult> {
     inFlight = new AbortController();
     const started = Date.now();
     // Tool lines must start on a fresh line even if streamed text didn't end with one.
@@ -119,11 +121,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const result = await runAgent({
         model,
         tools,
-        system: agentSystemPrompt(workdir),
+        system: mode.system ?? agentSystemPrompt(workdir),
         root: workdir,
         tracker,
         limits: config.limits,
-        history,
+        history: mode.history ?? history,
         task: text,
         signal: inFlight.signal,
         events: {
@@ -153,6 +155,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const cost = result.costIncomplete ? undefined : result.costUsd;
         print(dim(`[${model.model} · ${steps} · ${((Date.now() - started) / 1000).toFixed(1)}s · ${formatUsage(result.usage, cost)}]`));
       }
+      return result;
     } finally {
       inFlight = undefined;
     }
@@ -203,7 +206,25 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       inFlight = undefined;
     }
     print(describeTask(task));
-    await send(taskPrompt(task));
+
+    let branch;
+    try {
+      branch = await startFix(workdir, task);
+    } catch (err) {
+      if (!(err instanceof FixError)) throw err;
+      print(err.message);
+      return;
+    }
+    print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
+
+    // A fix is its own conversation; afterwards the chat continues from it.
+    const result = await send(taskPrompt(task), { system: fixSystemPrompt(workdir), history: [] });
+    try {
+      print((await completeFix(workdir, branch, task, result)).message);
+    } catch (err) {
+      if (!(err instanceof FixError)) throw err;
+      print(`Could not commit the fix: ${err.message}`);
+    }
   }
 
   // Async iteration (not rl.question) so lines typed or piped in before the

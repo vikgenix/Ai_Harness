@@ -35,7 +35,15 @@ Inside the harness, type a request about the code in the working directory (by d
 
 ### Fixing an issue
 
-`/fix 123` reads issue #123 (title, labels, description and up to 30 comments) from the GitHub repository the clone came from, using the public API; `GITHUB_TOKEN` is needed only for private repositories or more than 60 requests an hour. Issue text is written by anyone, so it is handed to the agent fenced as untrusted data, with an instruction not to follow anything in it beyond fixing the problem. Anything that is not an issue reference is taken as a task in your own words. The agent then works on it and ends with `finish`.
+`/fix 123` reads issue #123 (title, labels, description and up to 30 comments) from the GitHub repository the clone came from, using the public API; `GITHUB_TOKEN` is needed only for private repositories or more than 60 requests an hour. Issue text is written by anyone, so it is handed to the agent fenced as untrusted data, with an instruction not to follow anything in it beyond fixing the problem. Anything that is not an issue reference is taken as a task in your own words.
+
+Then:
+
+1. **Branch.** The working directory must be a git repository without uncommitted changes. The fix goes on a new branch, `harness/fix-123` (or `harness/<first-words-of-the-task>`), created from the default branch, so fixes never stack on each other or touch your branch.
+2. **Agent.** The agent gets a fix-specific system prompt and works alone through *understand → reproduce (failing test first) → fix at the root cause → verify with the tests → finish*. It is told never to run git commit/branch/checkout itself.
+3. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
+
+After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
 
 Without the UI: `make run REPO=<url> ISSUE=123` or `make run REPO=<url> TASK="..."`.
 
@@ -125,7 +133,7 @@ src/config.ts         loads and validates config; reads AI_API_KEY
 src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
-src/agent/            agent loop (model → tools → model ...), system prompt, /fix tasks
+src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
@@ -157,7 +165,7 @@ tests/                offline tests (vitest)
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
-| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ⬜ `/fix` workflow: clone, repo map, reproduce, fix, test, self-review, commit |
+| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ⬜ repo map, self-review |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |

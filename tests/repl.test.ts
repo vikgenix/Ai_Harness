@@ -6,7 +6,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { UsageTracker } from "../src/model/cost.js";
-import { ModelError, type ChatRequest, type ChatResponse, type ModelClient } from "../src/model/index.js";
+import { ModelError, type ChatRequest, type ChatResponse, type ModelClient, type ToolCall } from "../src/model/index.js";
 import { startRepl } from "../src/ui/repl.js";
 import { makeSourceRepo } from "./helpers.js";
 
@@ -136,31 +136,65 @@ describe("interactive session", () => {
     }
   });
 
-  it("/fix <n> fetches the issue of the clone's GitHub repository and gives it to the agent", async () => {
+  it("/fix <n> fetches the issue, fixes it on a branch and commits", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
     try {
-      execFileSync("git", ["init", "-q"], { cwd: dir });
+      await makeSourceRepo(dir);
       execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/widget.git"], { cwd: dir });
       const fetched: string[] = [];
       const fetchImpl = (async (url: string) => {
         fetched.push(url);
         return new Response(JSON.stringify({ title: "Crash on empty input", body: "Steps: run it", state: "open", comments: 0, labels: [] }), { status: 200 });
       }) as typeof fetch;
-      const { model, requests } = fakeModel();
+      const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      const reply = (content: string, toolCalls?: ToolCall[]): ChatResponse => ({
+        message: { role: "assistant", content, ...(toolCalls ? { toolCalls } : {}) },
+        usage,
+        stopReason: toolCalls ? "tool_use" : "end",
+        model: "claude-opus-5-5",
+        durationMs: 1,
+      });
+      const { model, requests } = fakeModel((_req, call) => {
+        if (call === 1) return reply("Hi."); // the chat message before /fix
+        if (call === 2) return reply("", [{ id: "c1", name: "create_file", input: { path: "src/fix.py", content: "x = 1\n" } }]);
+        if (call === 3) return reply("", [{ id: "f1", name: "finish", input: { outcome: "completed", summary: "Added src/fix.py." } }]);
+        return reply("I would need more details."); // the second /fix: answers without finishing
+      });
       const input = new PassThrough();
       const output = new PassThrough();
       let out = "";
       output.on("data", (d) => (out += d.toString()));
-      input.end([`/repo ${dir}`, "/fix 7", "/fix make the greeting louder", "/exit"].map((l) => `${l}\n`).join(""));
+      input.end([`/repo ${dir}`, "hello", "/fix 7", "/fix make the greeting louder", "/exit"].map((l) => `${l}\n`).join(""));
       await startRepl({ config, model, tracker: new UsageTracker(config.pricing), input, output, fetchImpl });
 
       expect(fetched).toEqual(["https://api.github.com/repos/acme/widget/issues/7"]);
-      expect(out).toContain("Issue acme/widget#7: Crash on empty input (open, 0 comments)");
-      const first = requests[0]!.messages[0]!;
+      expect(out).toContain("Issue acme/widget#7: Crash on empty input (open, 0 comments)\nWorking on branch harness/fix-7 (from ");
+      // The fix starts a fresh conversation with the fix prompt, not the chat's.
+      expect(requests[1]!.system).toContain("fixing one problem");
+      expect(requests[1]!.messages).toHaveLength(1);
+      const first = requests[1]!.messages[0]!;
       expect(first.role === "user" && first.content).toContain("<issue>\n# Crash on empty input");
-      expect(out).toContain("Task: make the greeting louder");
-      const last = requests[1]!.messages[requests[1]!.messages.length - 1]!;
-      expect(last.role === "user" && last.content).toBe("Fix this in the repository:\n\nmake the greeting louder");
+      expect(out).toContain("✓ Done: Added src/fix.py.");
+      expect(out).toMatch(/Committed [0-9a-f]+ on branch harness\/fix-7 \(1 file: src\/fix\.py\)\./);
+      const log = execFileSync("git", ["log", "-1", "--format=%s", "harness/fix-7"], { cwd: dir }).toString().trim();
+      expect(log).toBe("Fix #7: Crash on empty input");
+
+      expect(out).toContain("Task: make the greeting louder\nWorking on branch harness/make-the-greeting-louder (from harness/fix-7).");
+      expect(out).toContain("Not committed: the agent stopped without calling finish. No files were changed.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("/fix refuses to start with uncommitted changes", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
+    try {
+      await makeSourceRepo(dir);
+      await writeFile(path.join(dir, "README.md"), "changed\n");
+      const { model, requests } = fakeModel();
+      const { out } = await run([`/repo ${dir}`, "/fix tidy up", "/exit"], model);
+      expect(out).toContain("The working directory has uncommitted changes:\n M README.md");
+      expect(requests).toHaveLength(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
