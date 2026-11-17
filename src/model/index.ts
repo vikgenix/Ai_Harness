@@ -1,6 +1,6 @@
 import type { HarnessConfig } from "../config.js";
 import { AnthropicClient } from "./anthropic.js";
-import { ModelError } from "./errors.js";
+import { GeminiClient } from "./gemini.js";
 import { OpenAICompatibleClient } from "./openai.js";
 import type { ModelClient } from "./types.js";
 
@@ -16,7 +16,7 @@ export function createModelClient(config: HarnessConfig): ModelClient {
     case "groq":
     case "openai-compatible":
       return new OpenAICompatibleClient({ ...config, provider: config.provider });
-    default:
-      throw new ModelError("bad_request", `provider '${config.provider}' is not supported yet`);
+    case "gemini":
+      return new GeminiClient(config);
   }
 }
