@@ -3,6 +3,7 @@ import { USAGE, parseCliArgs } from "./cli/args.js";
 import { ConfigError, describeConfig, loadConfig, type HarnessConfig } from "./config.js";
 import { UsageTracker, formatUsage } from "./model/cost.js";
 import { ModelError, createModelClient } from "./model/index.js";
+import { runHeadless } from "./headless.js";
 import { startRepl } from "./ui/repl.js";
 
 /** Sends one tiny request to prove the key, model and endpoint work. */
@@ -54,8 +55,24 @@ async function main(): Promise<number> {
       console.error("--issue/--task needs --repo (or REPO=<url> with make run).");
       return 2;
     }
-    console.error("\nRunning without the UI is not implemented yet (arrives in Phase 3).");
-    return 3;
+    console.log();
+    // Ctrl-C stops the run cleanly (changes stay on the branch); a second one quits at once.
+    const abort = new AbortController();
+    process.on("SIGINT", () => {
+      if (abort.signal.aborted) process.exit(130);
+      console.error("\nStopping... (Ctrl-C again to quit at once)");
+      abort.abort();
+    });
+    return runHeadless({
+      config,
+      model: createModelClient(config),
+      tracker: new UsageTracker(config.pricing),
+      repo: args.repo,
+      issue: args.issue,
+      task: args.task,
+      githubToken: process.env.GITHUB_TOKEN || undefined,
+      signal: abort.signal,
+    });
   }
 
   console.log();

@@ -169,4 +169,9 @@ export async function completeFix(dir: string, fix: FixBranch, task: FixTask, re
   return { committed: true, commit, files, message: `Committed ${commit} on ${where} (${count(files)}: ${files.slice(0, 5).join(", ")}${files.length > 5 ? ", ..." : ""}).` };
 }
 
+/** The fix commit(s) on the branch as a patch file (git format-patch), for the run record. */
+export function fixPatch(dir: string, fix: FixBranch): Promise<string> {
+  return git(dir, ["format-patch", "--stdout", `${fix.base}..${fix.branch}`]).then((p) => `${p}\n`);
+}
+
 const count = (files: string[]) => `${files.length} ${files.length === 1 ? "file" : "files"}`;

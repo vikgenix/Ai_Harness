@@ -33,13 +33,17 @@ setup:
 	@$(WITH_NODE) npm run --silent build
 	@echo "==> Setup complete. Next: make run"
 
-run: check-key
-	@test -f dist/index.js || { echo "Not built yet. Run: make setup" >&2; exit 1; }
+# Rebuilds only when a source file changed since the last build, so `make run`
+# never runs stale code after an edit or a git pull.
+dist/index.js: $(shell find src -name '*.ts' 2>/dev/null) tsconfig.json package.json
+	@test -d node_modules || { echo "Not set up yet. Run: make setup" >&2; exit 1; }
+	@$(WITH_NODE) npm run --silent build
+
+run: check-key dist/index.js
 	@$(WITH_NODE) node dist/index.js $(RUN_ARGS)
 
 # One tiny request to check that the key, model and endpoint work.
-ping: check-key
-	@test -f dist/index.js || { echo "Not built yet. Run: make setup" >&2; exit 1; }
+ping: check-key dist/index.js
 	@$(WITH_NODE) node dist/index.js --ping
 
 test:

@@ -45,12 +45,28 @@ Then:
 
 After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
 
-Without the UI: `make run REPO=<url> ISSUE=123` or `make run REPO=<url> TASK="..."`.
+### Without the UI
+
+```
+make run REPO=https://github.com/owner/project ISSUE=123
+make run REPO=owner/project TASK="parser crashes on empty input"
+make run REPO=../local/project TASK="..."
+```
+
+Runs the same fix workflow without the interactive session (clone, branch, agent, commit) and prints each step. The exit code tells scripts what happened: `0` a fix was committed, `1` no fix (the agent was blocked, hit a limit or changed nothing; its changes stay on the branch), `2` a setup problem (clone failed, issue not found, uncommitted changes). Ctrl-C stops the run cleanly; a second Ctrl-C quits at once.
+
+Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `make clean`):
+
+| File | Content |
+|---|---|
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration |
+| `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
+| `transcript.json` | the full conversation with the model, for debugging |
 
 | Command | What it does |
 |---|---|
 | `make setup` | Installs dependencies and builds. Needs only `make`, `bash`, `curl` and `git`. |
-| `make run` | Starts the harness. Stops with a clear message if `AI_API_KEY` is not set. |
+| `make run` | Starts the harness (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. |
 | `make ping` | Sends one tiny request to check that the key, model and endpoint work. |
 | `make test` | Runs the offline test suite (no API key, no network) and a secret scan. |
 | `make clean` | Removes build output, run logs, cloned repos and the local Node.js copy. |
@@ -133,6 +149,7 @@ src/config.ts         loads and validates config; reads AI_API_KEY
 src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
+src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
 src/tools/            tools the agent can call
@@ -165,7 +182,7 @@ tests/                offline tests (vitest)
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
-| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ⬜ repo map, self-review |
+| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ⬜ repo map, self-review |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |

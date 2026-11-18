@@ -25,6 +25,9 @@ Options (when calling node dist/index.js directly):
   --check            validate configuration and exit (no API call)
   --ping             send one tiny request to check the key and model (make ping)
   -h, --help         show this help
+
+Without the UI, the exit code is 0 if a fix was committed, 1 if not (the agent
+was blocked or stopped), 2 for setup problems. Each run is saved in runs/.
 `;
 
 export function parseCliArgs(argv: string[]): CliArgs {
