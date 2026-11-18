@@ -21,6 +21,13 @@ export async function resolveTask(arg: string, workdir: string, opts: FetchIssue
   return { kind: "issue", issue: await fetchIssue(ref, opts) };
 }
 
+/** The task's words (issue title, body and comments), for ranking files in the repository map. */
+export function taskText(task: FixTask): string {
+  if (task.kind === "text") return task.text;
+  const { issue } = task;
+  return [issue.title, issue.body, ...issue.comments.map((c) => c.body)].join("\n");
+}
+
 /** One line for the terminal, e.g. "Issue #12: Crash on empty input (open, 3 comments)". */
 export function describeTask(task: FixTask): string {
   if (task.kind === "text") return `Task: ${task.text}`;

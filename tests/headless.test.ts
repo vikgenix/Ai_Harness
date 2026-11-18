@@ -81,6 +81,7 @@ describe("runHeadless", () => {
     expect(code).toBe(EXIT.committed);
     expect(out).toContain("Cloning local/demo...");
     expect(out).toContain("Task: make the greeting louder\nWorking on branch harness/make-the-greeting-louder (from ");
+    expect(out).toMatch(/\)\.\nRepo map: 2 files, 0 with symbols \(0 symbols\), ~\d+ tokens, [\d.]+s\.\n/);
     expect(out).toContain("  → create_file(path=src/greet.py, content=print('HELLO') )");
     expect(out).toContain("✓ Done: Added src/greet.py. Tests: none.");
     expect(out).toMatch(/\[claude-opus-5-5 · 2 steps · [\d.]+s · /);
@@ -106,6 +107,8 @@ describe("runHeadless", () => {
     expect(patch).toContain("+print('HELLO')");
     const transcript = JSON.parse(await readFile(path.join(runDir!, "transcript.json"), "utf8"));
     expect(transcript.map((m: { role: string }) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant"]);
+    expect(transcript[0].content).toMatch(/^<repo_map>\n[^]*<\/repo_map>\n[^]*Fix this in the repository:\n\nmake the greeting louder$/);
+    expect(record.repoMap).toMatchObject({ files: 2, detailedFiles: 0 });
   });
 
   it("exits 1 and commits nothing when the agent is blocked", async () => {
@@ -118,6 +121,14 @@ describe("runHeadless", () => {
     const record = JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8"));
     expect(record).toMatchObject({ outcome: "blocked", committed: false, commit: null });
     expect(await readdir(runDir!)).toEqual(["result.json", "transcript.json"]);
+  });
+
+  it("leaves the repository map out when repo_map_tokens is 0", async () => {
+    const model = scripted([[finish("blocked", "Nothing to do.")]]);
+    const { out, runDir } = await headless(model, { task: "no map please", config: { ...config, repoMapTokens: 0 } });
+    expect(out).not.toContain("Repo map:");
+    const transcript = JSON.parse(await readFile(path.join(runDir!, "transcript.json"), "utf8"));
+    expect(transcript[0].content).toBe("Fix this in the repository:\n\nno map please");
   });
 
   it("works on a local directory as-is", async () => {

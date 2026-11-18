@@ -22,6 +22,7 @@ Inside the harness, type a request about the code in the working directory (by d
 /fix 123                      # fix issue #123 of the cloned GitHub repository
 /fix owner/project#123        # or an issue URL
 /fix parser crashes on empty input   # a task in your own words
+/map [words]                  # show the repository map (files related to the words first)
 /cost                         # tokens and cost so far
 /clear                        # start a new conversation
 /config                       # show provider and model
@@ -40,10 +41,32 @@ Inside the harness, type a request about the code in the working directory (by d
 Then:
 
 1. **Branch.** The working directory must be a git repository without uncommitted changes. The fix goes on a new branch, `harness/fix-123` (or `harness/<first-words-of-the-task>`), created from the default branch, so fixes never stack on each other or touch your branch.
-2. **Agent.** The agent gets a fix-specific system prompt and works alone through *understand → reproduce (failing test first) → fix at the root cause → verify with the tests → finish*. It is told never to run git commit/branch/checkout itself.
-3. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
+2. **Repository map.** The task message starts with a map of the repository: its source files with their classes, functions and methods and their line numbers, then the other files by path (see below).
+3. **Agent.** The agent gets a fix-specific system prompt and works alone through *understand → reproduce (failing test first) → fix at the root cause → verify with the tests → finish*. It is told never to run git commit/branch/checkout itself.
+4. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
 
 After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
+
+### Repository map
+
+Without a map, an agent spends its first steps listing directories and opening files to find its way around. The map gives it that overview up front, in one cached message, so it can go straight to the right lines:
+
+```
+src/click/core.py:
+  2232: class Parameter(ABC)
+  2852:   def resolve_envvar_value(self, ctx: Context) -> str | None
+  3041: class Option(Parameter)
+  3211:   def is_bool_flag(self) -> bool
+  …
+Other files:
+  ./: README.md, pyproject.toml, tox.ini
+  tests/: conftest.py, test_options.py, ...
+```
+
+- **Symbols** come from [tree-sitter](https://tree-sitter.github.io/) grammars compiled to WebAssembly (no native build on install) for Python, JavaScript, TypeScript/TSX, Go, Rust, Java, C#, Ruby, PHP and C/C++. Each symbol is shown as its signature on one line. Files in other languages are listed by path.
+- **Size**: about `repo_map_tokens` tokens (default 3000, set in `config/model.yaml`; `0` turns the map off). Files are listed using `.gitignore`, like the tools.
+- **Ranking**: when the repository does not fit, the files that look most related to the task come first. A file ranks higher when the task mentions its name or path, or names its functions and classes. Words that appear in many files (like `model` in Django) count less, and tests rank below the code they test. Big files are trimmed to the symbols the task mentions, their classes and public names, instead of being dropped.
+- **Speed**: the map takes about 0.2 s for a repository of a few hundred files and about 2 s for Django (7,000 files). Parsing stops at 1,500 files or 8 s, whichever comes first.
 
 ### Without the UI
 
@@ -59,9 +82,9 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, repository map size |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
-| `transcript.json` | the full conversation with the model, for debugging |
+| `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
 | Command | What it does |
 |---|---|
@@ -149,6 +172,7 @@ src/config.ts         loads and validates config; reads AI_API_KEY
 src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
+src/repo/map.ts       repository map: tree-sitter symbols, ranked by the task, within a token budget
 src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
@@ -182,7 +206,7 @@ tests/                offline tests (vitest)
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
-| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ⬜ repo map, self-review |
+| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ⬜ self-review |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |

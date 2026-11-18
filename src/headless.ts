@@ -6,12 +6,13 @@ import { fileURLToPath } from "node:url";
 import { completeFix, fixPatch, FixError, startFix, type FixOutcome } from "./agent/fix.js";
 import { runAgent } from "./agent/loop.js";
 import { fixSystemPrompt } from "./agent/prompt.js";
-import { describeTask, resolveTask, taskPrompt, type FixTask } from "./agent/task.js";
+import { describeTask, resolveTask, taskPrompt, taskText, type FixTask } from "./agent/task.js";
 import type { HarnessConfig } from "./config.js";
 import { GitHubError } from "./github/issues.js";
 import { formatUsage, type UsageTracker } from "./model/cost.js";
 import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
+import { describeRepoMap, repoMapFor, withRepoMap } from "./repo/map.js";
 import { createDefaultTools } from "./tools/index.js";
 import { describeCall } from "./ui/repl.js";
 
@@ -85,6 +86,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     return EXIT.setup;
   }
   print(`Working on branch ${fix.branch} (from ${fix.baseName}).`);
+  const map = await repoMapFor(dir, taskText(task), opts.config.repoMapTokens, opts.signal);
+  if (map) print(describeRepoMap(map));
   print();
 
   // 3. Agent. Model text is streamed; tool calls are shown one per line.
@@ -106,7 +109,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     root: dir,
     tracker: opts.tracker,
     limits: opts.config.limits,
-    task: taskPrompt(task),
+    task: withRepoMap(taskPrompt(task), map),
     signal: opts.signal,
     events: {
       onText: write,
@@ -154,6 +157,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     usage: result.usage,
     costUsd: result.costIncomplete ? null : result.costUsd,
     error: result.error?.message ?? null,
+    repoMap: map ? { files: map.files, detailedFiles: map.detailedFiles, symbols: map.symbols, chars: map.text.length, durationMs: map.durationMs } : null,
   };
   const saved = ["result.json", "transcript.json"];
   await writeFile(path.join(runDir, "result.json"), `${JSON.stringify(record, null, 2)}\n`);

@@ -174,6 +174,9 @@ describe("interactive session", () => {
       expect(requests[1]!.messages).toHaveLength(1);
       const first = requests[1]!.messages[0]!;
       expect(first.role === "user" && first.content).toContain("<issue>\n# Crash on empty input");
+      // The repository map comes first in the task message.
+      expect(out).toMatch(/Working on branch harness\/fix-7 \(from \w+\)\.\nRepo map: 2 files, 0 with symbols/);
+      expect(first.role === "user" && first.content).toMatch(/^<repo_map>\n[^]*Files:\n {2}\.\/: README\.md\n {2}src\/: app\.py\n<\/repo_map>\n/);
       expect(out).toContain("✓ Done: Added src/fix.py.");
       expect(out).toMatch(/Committed [0-9a-f]+ on branch harness\/fix-7 \(1 file: src\/fix\.py\)\./);
       const log = execFileSync("git", ["log", "-1", "--format=%s", "harness/fix-7"], { cwd: dir }).toString().trim();
@@ -254,6 +257,20 @@ describe("interactive session", () => {
       expect(requests[0]!.system).toContain(dir.split(path.sep).pop()!);
       expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash", "finish"]);
       expect(requests[1]!.messages[2]).toMatchObject({ role: "tool", results: [{ content: "1\tprint('hi')" }] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("/map shows the repository map without calling the model", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
+    try {
+      await writeFile(path.join(dir, "billing.py"), "class Invoice:\n    def total(self):\n        return 0\n");
+      const { model, requests } = fakeModel();
+      const { out } = await run(["/map invoice totals", "/exit"], model, undefined, dir);
+      expect(out).toContain("billing.py:\n  1: class Invoice\n  2:   def total(self)");
+      expect(out).toMatch(/Repo map: 1 file, 1 with symbols \(2 symbols\), ~\d+ tokens, [\d.]+s\./);
+      expect(requests).toHaveLength(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

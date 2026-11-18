@@ -5,17 +5,19 @@ import type { Readable, Writable } from "node:stream";
 import { runAgent, type AgentResult } from "../agent/loop.js";
 import { completeFix, FixError, startFix } from "../agent/fix.js";
 import { agentSystemPrompt, fixSystemPrompt } from "../agent/prompt.js";
-import { describeTask, resolveTask, taskPrompt } from "../agent/task.js";
+import { describeTask, resolveTask, taskPrompt, taskText } from "../agent/task.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
 import { GitHubError } from "../github/issues.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
+import { describeRepoMap, repoMapFor, withRepoMap } from "../repo/map.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
 const HELP = `Type a request about the code in the working directory, or a command:
   /repo <url|dir>    clone a repository (or open a local directory) to work in
   /fix <n|url|text>  fix an issue number, issue URL or described bug
+  /map [words]       show the repository map (files most related to the words first)
   /cost              tokens and cost so far this session
   /clear             start a new conversation
   /config            show the active model configuration
@@ -216,9 +218,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return;
     }
     print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
+    const map = await repoMapFor(workdir, taskText(task), config.repoMapTokens);
+    if (map) print(describeRepoMap(map));
 
     // A fix is its own conversation; afterwards the chat continues from it.
-    const result = await send(taskPrompt(task), { system: fixSystemPrompt(workdir), history: [] });
+    const result = await send(withRepoMap(taskPrompt(task), map), { system: fixSystemPrompt(workdir), history: [] });
     try {
       print((await completeFix(workdir, branch, task, result)).message);
     } catch (err) {
@@ -279,6 +283,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           if (!arg) print(`Working directory: ${workdir}${repo && !isDirectory(repo) ? `\nRepository: ${repo}` : ""}`);
           else await openRepo(arg);
           break;
+        case "/map": {
+          // Shown even when the map is turned off for /fix, at the default size.
+          const map = await repoMapFor(workdir, arg, config.repoMapTokens || 3000);
+          print(map ? `${map.text}\n\n${describeRepoMap(map)}` : "Could not build the repository map.");
+          break;
+        }
         case "/fix":
           if (!repo) print("Open a repository first: /repo <url>");
           else if (!arg) print("Usage: /fix <issue number | issue url | description>");

@@ -29,6 +29,11 @@ effort: high
 # on another Claude model instead of stopping (server-side fallback).
 refusal_fallback: true
 
+# Repository map: an overview of the repository's files, classes and functions
+# (with line numbers) given to the agent at the start of /fix, so it spends
+# fewer steps exploring. Size in tokens; 0 turns it off.
+repo_map_tokens: 3000
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0

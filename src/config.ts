@@ -32,6 +32,8 @@ export interface HarnessConfig {
   effort: Effort | undefined;
   /** Anthropic: let the API retry a declined request on another model. */
   refusalFallback: boolean;
+  /** Size of the repository map given to /fix, in tokens; 0 turns it off. */
+  repoMapTokens: number;
   /** undefined when the provider does not accept the setting. */
   temperature: number | undefined;
   seed: number | undefined;
@@ -134,6 +136,7 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     maxOutputTokens: optionalNumber(file, "max_output_tokens", 1, 1_000_000) ?? 16000,
     effort: effortValue as Effort | undefined,
     refusalFallback,
+    repoMapTokens: optionalNumber(file, "repo_map_tokens", 0, 50_000) ?? 3000,
     temperature: SUPPORTS_TEMPERATURE[provider] ? temperature : undefined,
     seed: SUPPORTS_SEED[provider] ? seed : undefined,
     limits: {

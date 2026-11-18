@@ -121,6 +121,12 @@ describe("loadConfig", () => {
     expect(set).toMatchObject({ effort: "xhigh", refusalFallback: false, limits: { maxRetries: 0 } });
   });
 
+  it("reads repo_map_tokens: 3000 by default, 0 turns the map off", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } }).repoMapTokens).toBe(3000);
+    expect(loadConfig({ configPath: yamlFile(`${BASE}\nrepo_map_tokens: 0\n`), env: { AI_API_KEY: "sk-fake" } }).repoMapTokens).toBe(0);
+    expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nrepo_map_tokens: -5\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/repo_map_tokens/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);
