@@ -133,6 +133,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nself_review: maybe\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/self_review/);
   });
 
+  it("reads install_deps (on by default) and install_timeout_s", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } })).toMatchObject({ installDeps: true, installTimeoutS: 600 });
+    const off = loadConfig({ configPath: yamlFile(`${BASE}\ninstall_deps: false\ninstall_timeout_s: 120\n`), env: { AI_API_KEY: "sk-fake" } });
+    expect(off).toMatchObject({ installDeps: false, installTimeoutS: 120 });
+    expect(() => loadConfig({ configPath: yamlFile(`${BASE}\ninstall_deps: yes please\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/install_deps/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);

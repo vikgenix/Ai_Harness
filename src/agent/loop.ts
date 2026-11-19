@@ -36,6 +36,8 @@ export interface AgentOptions {
   system: string;
   /** Repository root the tools work in. */
   root: string;
+  /** Extra environment for the agent's commands (the installed dependencies). */
+  env?: Record<string, string>;
   tracker: UsageTracker;
   limits: { maxSteps: number; maxCostUsd: number };
   /** Earlier conversation; the new task is appended to it. */
@@ -135,7 +137,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
         call.name === FINISH_TOOL && calls.length > 1
           ? // The model has not seen the other results yet (e.g. failing tests), so it cannot know it is done.
             { callId: call.id, name: call.name, content: "Error: call finish on its own, after you have seen the results of your other tool calls", isError: true }
-          : await tools.run(call, { root: opts.root, signal });
+          : await tools.run(call, { root: opts.root, signal, env: opts.env });
       if (call.name === FINISH_TOOL && !result.isError && opts.beforeFinish && steps < limits.maxSteps && costUsd < limits.maxCostUsd && !signal?.aborted) {
         const objection = await opts.beforeFinish(call.input as FinishInput);
         if (objection !== undefined) {

@@ -55,6 +55,7 @@ describe("detectProject: Python", () => {
         test: { command: "python3 -m pytest", reason: "pytest is configured in pyproject.toml" },
         testOne: "python3 -m pytest <file>::<test name>",
         tools: ["python3", "uv"],
+        pip: { editable: true, extras: [], groups: [], requirements: [] },
       },
     ]);
     expect(info.hints).toEqual(["CI runs `uv run pytest -q tests` (.github/workflows/ci.yml)", "the Makefile has a `test` target (make test)"]);
@@ -72,6 +73,30 @@ describe("detectProject: Python", () => {
       install: "pip install -e .[test] -r requirements-dev.txt",
       test: { command: "python3 -m pytest", reason: "pytest is listed in the project files" },
     });
+  });
+
+  it("reads extras and dependency groups from their own tables only", async () => {
+    const info = await detect({
+      "pyproject.toml": [
+        "[project]",
+        'name = "x"',
+        "[project.optional-dependencies]",
+        'docs = ["sphinx"]',
+        'tests = ["pytest"]',
+        "[dependency-groups]",
+        'dev = ["ruff"]',
+        "[tool.hatch.envs.test]",
+        'dev = "not a group"',
+      ].join("\n"),
+    });
+    expect(info.ecosystems[0]?.pip).toEqual({ editable: true, extras: ["tests"], groups: ["dev"], requirements: [] });
+    expect(info.ecosystems[0]?.install).toBe("pip install -e .[tests]");
+  });
+
+  it("a project that is not a package installs its requirements files (docs ones aside)", async () => {
+    const info = await detect({ "pyproject.toml": "[tool.pytest.ini_options]\n", "requirements.txt": "", "requirements-docs.txt": "", "requirements-test.txt": "" });
+    expect(info.ecosystems[0]?.pip).toEqual({ editable: false, extras: [], groups: [], requirements: ["requirements-test.txt", "requirements.txt"] });
+    expect(info.ecosystems[0]?.install).toBe("pip install -r requirements-test.txt -r requirements.txt");
   });
 
   it.each([
@@ -176,6 +201,9 @@ describe("output", () => {
       ].join("\n"),
     );
     expect(withProject("Fix it", info)).toMatch(/^<project>\n[^]*<\/project>\n\nFix it$/);
+    const installed = projectBlock(info, ["Dependencies (installed ...):", "- Python: installed (uv sync --frozen)"]);
+    expect(installed).toContain("Not installed: uv (commands that need them will fail; say so in the summary if the tests cannot run)\nDependencies (installed ...):\n- Python: installed (uv sync --frozen)\n</project>");
+    expect(installed).not.toContain("may not be installed yet");
     expect(describeProject(info)).toBe("Project: Python (uv) · tests: python3 -m pytest · not installed: uv");
   });
 

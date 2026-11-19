@@ -36,6 +36,10 @@ export interface HarnessConfig {
   repoMapTokens: number;
   /** /fix: show the agent its diff for a self-review before accepting "completed". */
   selfReview: boolean;
+  /** /fix: install the repository's dependencies before the agent starts. */
+  installDeps: boolean;
+  /** Time limit per install command, in seconds. */
+  installTimeoutS: number;
   /** undefined when the provider does not accept the setting. */
   temperature: number | undefined;
   seed: number | undefined;
@@ -130,6 +134,8 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
   if (typeof refusalFallback !== "boolean") throw new ConfigError("'refusal_fallback' must be true or false.");
   const selfReview = file.self_review ?? true;
   if (typeof selfReview !== "boolean") throw new ConfigError("'self_review' must be true or false.");
+  const installDeps = file.install_deps ?? true;
+  if (typeof installDeps !== "boolean") throw new ConfigError("'install_deps' must be true or false.");
 
   return {
     provider,
@@ -142,6 +148,8 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     refusalFallback,
     repoMapTokens: optionalNumber(file, "repo_map_tokens", 0, 50_000) ?? 3000,
     selfReview,
+    installDeps,
+    installTimeoutS: optionalNumber(file, "install_timeout_s", 10, 3600) ?? 600,
     temperature: SUPPORTS_TEMPERATURE[provider] ? temperature : undefined,
     seed: SUPPORTS_SEED[provider] ? seed : undefined,
     limits: {

@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–3 done. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, branch, reproduce → fix → verify, self-review, commit. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–3 done, Phase 4 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, branch, reproduce → fix → verify, self-review, commit. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -67,7 +67,35 @@ Project: Python (uv) · tests: python3 -m pytest
 
 It also notes how to run a single test, the install command, the required runtime version (`requires-python`, `engines.node`, `go.mod`, ...), test commands used in `.github/workflows`, a Makefile `test` target and `tox.ini`. Projects in first-level directories (`backend/`, `frontend/`) are found too. Finally, it checks which tools (`python3`, `node`, `uv`, `go`, ...) are installed and their versions, so a missing one is flagged up front.
 
-Nothing from the repository is run: files are only read, and tool versions are checked from outside the repository (so version files and Go toolchain switches in it have no effect). Installing dependencies comes next (Phase 4.2).
+Detection runs nothing from the repository: files are only read, and tool versions are checked from outside the repository (so version files and Go toolchain switches in it have no effect).
+
+### Dependencies
+
+Before the agent starts, `/fix` installs the project's dependencies, so its first test run works instead of failing on imports:
+
+```
+Project: Python (uv) · tests: python3 -m pytest
+  Python: uv venv --quiet --allow-existing "$VIRTUAL_ENV"; uv sync --frozen; uv pip install --quiet pytest
+  ✓ Python: installed in 11.7s
+Dependencies: 1 installed (11.7s).
+```
+
+| Ecosystem | Installs with | Where |
+|---|---|---|
+| Python | `uv` when installed (fast; it also fetches a Python that fits `requires-python`), else `python3 -m venv` + pip. `uv sync`, `poetry install` or `pipenv sync` when the project uses them; otherwise `pip install -e .[test extra]`, test dependency groups and requirements files. pytest is added when the tests use it. | a virtualenv in `envs/` (outside the repository) |
+| Node.js | `npm ci` (or `npm install`), `pnpm install`, `yarn install`, `bun install` | `node_modules/` |
+| Go · Rust | `go mod download` · `cargo fetch` | the tools' own caches |
+| Ruby · PHP · .NET | `bundle install` · `composer install` · `dotnet restore` | `envs/` · `vendor/` · NuGet cache |
+| Java/Kotlin | not installed beforehand: Maven and Gradle download on the first build | |
+
+The agent's `bash` commands run with the environment active (`VIRTUAL_ENV`, the virtualenv and `node_modules/.bin` first on `PATH`), so `python -m pytest` and `pip install` use the virtualenv, not the system Python. The `<project>` block tells the agent what was installed, and for a failed install, the command and the end of its output.
+
+- **The repository stays clean.** Lockfiles the install rewrote are restored, and new files it made (`*.egg-info`, `node_modules/` without a `.gitignore`, ...) are added to `.git/info/exclude`, so they never end up in the fix commit.
+- **Fast the second time.** An install is skipped when the project files (`pyproject.toml`, lockfiles, `package.json`, ...) have not changed since the last successful one. Reopening the repository with `/repo` in a later session uses the environment again.
+- **Bounded.** Each install command stops after `install_timeout_s` (default 600). A failed install never stops the fix. Ctrl-C skips the rest of the install. Set `install_deps: false` in `config/model.yaml` to turn it off.
+- **Same trust as running the tests.** Installing runs the project's build code (`setup.py`, install scripts), as running its tests does; the harness's API keys and tokens are removed from its environment. For untrusted repositories, run the harness in a container.
+
+`make clean` removes `envs/`.
 
 ### Self-review
 
@@ -118,7 +146,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
 | `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
@@ -128,7 +156,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 | `make run` | Starts the harness (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. |
 | `make ping` | Sends one tiny request to check that the key, model and endpoint work. |
 | `make test` | Runs the offline test suite (no API key, no network) and a secret scan. |
-| `make clean` | Removes build output, run logs, cloned repos and the local Node.js copy. |
+| `make clean` | Removes build output, run logs, cloned repos, dependency environments and the local Node.js copy. |
 | `make clean-env-test` | Runs setup + test in a fresh Ubuntu container (needs Docker). |
 
 ## Model configuration
@@ -179,7 +207,7 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 | `find_files` | Finds files by name or path: a glob (`*.py`, `tests/**/test_*.ts`, `*.{js,ts}`) or plain text matched anywhere in the path, ignoring case (`config`). Skips files ignored by git. Shows up to 200 paths. |
 | `edit_file` | Changes an existing file by replacing exact text (`old_string` → `new_string`). The text must be unique unless `replace_all` is set; a miss explains why (different indentation, copied line numbers). Keeps CRLF line endings and file permissions, writes atomically, never touches `.git/`. Returns the edited lines with their new numbers. |
 | `create_file` | Creates a new file (and missing parent directories). Never overwrites: an existing file is an error pointing to `edit_file`. Files starting with `#!` are made executable. Max 1 MB, never inside `.git/`. |
-| `bash` | Runs a shell command in the repository root (tests, builds, git status). Fresh shell per call, no input (prompts get EOF), timeout 120s by default (max 600s) that stops the whole process tree. Output keeps the first 10k and last 20k characters, without colour codes. API keys and tokens are removed from the command's environment. Refuses `sudo`, `git push`, `rm` outside the repo or of `.git`, `curl \| sh` and similar. This is a guard rail, not a sandbox: for untrusted repositories, run the harness in a container. |
+| `bash` | Runs a shell command in the repository root (tests, builds, git status). Fresh shell per call, no input (prompts get EOF), timeout 120s by default (max 600s) that stops the whole process tree. Output keeps the first 10k and last 20k characters, without colour codes. The installed dependencies are active ([Dependencies](#dependencies)); API keys and tokens are removed from the command's environment. Refuses `sudo`, `git push`, `rm` outside the repo or of `.git`, `curl \| sh` and similar. This is a guard rail, not a sandbox: for untrusted repositories, run the harness in a container. |
 | `finish` | Ends a task with an outcome (`completed` or `blocked`) and a summary of what changed and how it was verified; the agent loop stops there. Must be called on its own, so the model has seen every tool result (e.g. failing tests) before declaring it is done. Plain questions are just answered. |
 
 Safety and limits:
@@ -210,6 +238,7 @@ src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
 src/repo/map.ts       repository map: tree-sitter symbols, ranked by the task, within a token budget
 src/repo/detect.ts    project detection: ecosystems, test commands, installed tools
+src/repo/env.ts       dependency install into envs/, keeping the repository clean
 src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
@@ -244,7 +273,7 @@ tests/                offline tests (vitest)
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `grep`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
-| 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ⬜ install dependencies in an isolated environment · ⬜ baseline test run · ⬜ optional Docker sandbox |
+| 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ⬜ baseline test run · ⬜ optional Docker sandbox |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |
 | 7 | `make eval` on SWE-bench Lite |

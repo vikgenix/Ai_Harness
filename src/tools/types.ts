@@ -5,6 +5,8 @@ export interface ToolContext {
   /** Root of the repository being worked on; tools never touch files outside it. */
   root: string;
   signal?: AbortSignal;
+  /** Extra environment for commands, e.g. the virtualenv the dependencies were installed in. */
+  env?: Record<string, string>;
 }
 
 /**

@@ -108,6 +108,7 @@ describe("runHeadless", () => {
     });
     expect(record.selfReview.rounds).toBe(1);
     expect(record.selfReview.findings).toHaveLength(2);
+    expect(record.dependencies).toBeNull(); // no project files, nothing to install
     expect(record.commit).toBe(execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: clone }).toString().trim());
     const patch = await readFile(path.join(runDir!, "fix.patch"), "utf8");
     expect(patch).toContain("Subject: [PATCH] Fix: make the greeting louder");

@@ -64,4 +64,4 @@ clean-env-test:
 	@./scripts/clean-env-test.sh
 
 clean:
-	rm -rf dist runs workspaces coverage node_modules .tools
+	rm -rf dist runs workspaces envs coverage node_modules .tools

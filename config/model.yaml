@@ -39,6 +39,13 @@ repo_map_tokens: 3000
 # tests) once before accepting. Costs one extra step.
 self_review: true
 
+# Install the repository's dependencies before /fix starts, so the tests can
+# run: Python into a virtualenv kept outside the repository (envs/), Node into
+# node_modules/, and so on. Skipped when the project files have not changed
+# since the last install. install_timeout_s limits each install command.
+install_deps: true
+install_timeout_s: 600
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0

@@ -30,6 +30,19 @@ export interface Ecosystem {
   testOne?: string;
   /** Tools the commands need, e.g. ["python3", "uv"]. */
   tools: string[];
+  /** Python: what a pip-style install covers (used when there is no lockfile tool). */
+  pip?: PipInstall;
+}
+
+export interface PipInstall {
+  /** The directory is a package: install it with `pip install -e .`. */
+  editable: boolean;
+  /** Optional-dependency extras for testing, e.g. ["test"]. */
+  extras: string[];
+  /** Dependency groups (PEP 735) for testing, e.g. ["dev"]. */
+  groups: string[];
+  /** Requirements files to install, relative to the ecosystem's directory. */
+  requirements: string[];
 }
 
 export interface ProjectInfo {
@@ -104,17 +117,19 @@ const python: Detector = async (repo, dir, strongOnly) => {
         : files.includes("pdm.lock")
           ? "pdm"
           : "pip";
-  const extras = [...pyproject.matchAll(/^(test|tests|testing|dev)\s*=/gm)].map((m) => m[1]!);
-  const devReqs = requirements.filter((r) => /dev|test/.test(r));
+  const testKey = /^(test|tests|testing|dev)$/;
+  const extras = tomlKeys(pyproject, "project.optional-dependencies").filter((k) => testKey.test(k)).slice(0, 1);
+  const groups = tomlKeys(pyproject, "dependency-groups").filter((k) => testKey.test(k));
+  const editable = files.includes("setup.py") || files.includes("setup.cfg") || /^\[(project|build-system|tool\.poetry)\]/m.test(pyproject);
+  // A package brings its own dependencies; otherwise the requirements files are the dependencies (docs ones aside).
+  const pipRequirements = editable ? requirements.filter((r) => /dev|test/.test(r)) : requirements.filter((r) => !/doc/.test(r));
+  const pip: PipInstall = { editable, extras, groups, requirements: pipRequirements };
   const install = {
     uv: "uv sync",
     poetry: "poetry install",
     pipenv: "pipenv install --dev",
     pdm: "pdm install",
-    pip:
-      files.includes("pyproject.toml") || files.includes("setup.py")
-        ? `pip install -e .${extras.length ? `[${extras[0]}]` : ""}${devReqs.map((r) => ` -r ${r}`).join("")}`
-        : requirements.map((r) => `-r ${r}`).join(" ").replace(/^/, "pip install "),
+    pip: ["pip install", editable ? `-e .${extras.length ? `[${extras[0]}]` : ""}` : "", ...pipRequirements.map((r) => `-r ${r}`)].filter(Boolean).join(" "),
   }[packageManager];
 
   // Which test runner: configured or listed pytest, Django's runners, else unittest.
@@ -159,8 +174,24 @@ const python: Detector = async (repo, dir, strongOnly) => {
     test,
     testOne,
     tools: ["python", ...(packageManager === "pip" ? [] : [packageManager])],
+    pip,
   };
 };
+
+/** Keys directly under a TOML table, e.g. the extras in [project.optional-dependencies]. */
+function tomlKeys(toml: string, table: string): string[] {
+  const keys: string[] = [];
+  let inside = false;
+  for (const line of toml.split("\n")) {
+    const header = /^\s*\[([^\]]+)\]\s*(#.*)?$/.exec(line);
+    if (header) inside = header[1]!.trim() === table;
+    else if (inside) {
+      const key = /^\s*["']?([\w.-]+)["']?\s*=/.exec(line)?.[1];
+      if (key) keys.push(key);
+    }
+  }
+  return keys;
+}
 
 const NPM_PLACEHOLDER = /no test specified/;
 
@@ -425,8 +456,11 @@ export async function detectProject(root: string, opts: { versionOf?: (tool: str
 
 // --- output ----------------------------------------------------------------------
 
-/** The detection as a block for the start of the task message. */
-export function projectBlock(info: ProjectInfo): string {
+/**
+ * The detection as a block for the start of the task message. `dependencies`
+ * says what the harness installed (replacing the "may not be installed" note).
+ */
+export function projectBlock(info: ProjectInfo, dependencies?: string[]): string {
   const lines = ["<project>"];
   if (!info.ecosystems.length) {
     lines.push("No known project files (pyproject.toml, package.json, go.mod, ...) were found. Look at the README for how to build and test.");
@@ -447,14 +481,15 @@ export function projectBlock(info: ProjectInfo): string {
   const missing = Object.entries(info.tools).filter(([, v]) => v === null).map(([t]) => t);
   if (have.length) lines.push(`Installed: ${have.map(([t, v]) => `${t} ${v}`).join(", ")}`);
   if (missing.length) lines.push(`Not installed: ${missing.join(", ")} (commands that need them will fail; say so in the summary if the tests cannot run)`);
-  if (info.ecosystems.length) lines.push("Dependencies may not be installed yet: if the tests fail to import packages, install them first.");
+  if (dependencies?.length) lines.push(...dependencies);
+  else if (info.ecosystems.length) lines.push("Dependencies may not be installed yet: if the tests fail to import packages, install them first.");
   lines.push("</project>");
   return lines.join("\n");
 }
 
 /** The task message with the project block in front. */
-export function withProject(prompt: string, info: ProjectInfo | undefined): string {
-  return info ? `${projectBlock(info)}\n\n${prompt}` : prompt;
+export function withProject(prompt: string, info: ProjectInfo | undefined, dependencies?: string[]): string {
+  return info ? `${projectBlock(info, dependencies)}\n\n${prompt}` : prompt;
 }
 
 /** One line for the terminal: "Project: Python (uv) · tests: python3 -m pytest · python3 3.12.4". */

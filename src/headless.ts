@@ -14,6 +14,7 @@ import { formatUsage, type UsageTracker } from "./model/cost.js";
 import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
 import { describeProject, projectFor, withProject } from "./repo/detect.js";
+import { dependencyLines, describeSetup, prepareEnvironment } from "./repo/env.js";
 import { describeRepoMap, repoMapFor, withRepoMap } from "./repo/map.js";
 import { createDefaultTools } from "./tools/index.js";
 import { describeCall } from "./ui/repl.js";
@@ -36,6 +37,8 @@ export interface HeadlessOptions {
   githubToken?: string;
   workspacesDir?: string;
   runsDir?: string;
+  /** Where dependency environments are kept (default: envs/ in the harness directory). */
+  envsDir?: string;
   output?: Writable;
   signal?: AbortSignal;
   /** For tests: replaces the GitHub API's fetch. */
@@ -92,6 +95,11 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   if (map) print(describeRepoMap(map));
   const project = await projectFor(dir);
   if (project) print(describeProject(project));
+  const setup =
+    project && opts.config.installDeps
+      ? await prepareEnvironment(dir, project, { envsDir: opts.envsDir, timeoutS: opts.config.installTimeoutS, signal: opts.signal, onProgress: print })
+      : undefined;
+  if (setup) print(describeSetup(setup));
   print();
 
   // 3. Agent. Model text is streamed; tool calls are shown one per line.
@@ -112,9 +120,10 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     tools: createDefaultTools(),
     system: fixSystemPrompt(dir),
     root: dir,
+    env: setup?.env,
     tracker: opts.tracker,
     limits: opts.config.limits,
-    task: withRepoMap(withProject(taskPrompt(task), project), map),
+    task: withRepoMap(withProject(taskPrompt(task), project, setup && dependencyLines(setup)), map),
     signal: opts.signal,
     events: {
       onText: write,
@@ -173,6 +182,15 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     selfReview: review ? { rounds: review.rounds, findings: review.findings } : null,
     project: project
       ? { ecosystems: project.ecosystems.map((e) => ({ name: e.name, dir: e.dir, packageManager: e.packageManager ?? null, test: e.test?.command ?? null })), tools: project.tools }
+      : null,
+    dependencies: setup
+      ? {
+          envDir: setup.envDir,
+          durationMs: setup.durationMs,
+          results: setup.results.map((r) => ({ name: r.name, dir: r.dir, status: r.status, commands: r.commands, durationMs: r.durationMs, failed: r.failed ?? null })),
+          restored: setup.restored,
+          excluded: setup.excluded,
+        }
       : null,
     repoMap: map ? { files: map.files, detailedFiles: map.detailedFiles, symbols: map.symbols, chars: map.text.length, durationMs: map.durationMs } : null,
   };

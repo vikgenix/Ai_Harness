@@ -6,6 +6,7 @@ coverage/
 # Agent output: run logs and cloned target repos
 runs/
 workspaces/
+envs/
 
 # Secrets: only .env.example may be committed
 .env

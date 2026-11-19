@@ -43,6 +43,11 @@ describe("bash", () => {
     }
   });
 
+  it("adds the context's environment (the installed dependencies)", async () => {
+    const out = await bash.run({ command: 'echo "$VIRTUAL_ENV|$PATH"' }, { root, env: { VIRTUAL_ENV: "/envs/x/venv", PATH: `/envs/x/venv/bin:${process.env.PATH}` } });
+    expect(out).toMatch(/^\/envs\/x\/venv\|\/envs\/x\/venv\/bin:/);
+  });
+
   it("stops a command at the timeout, including its child processes", async () => {
     const started = Date.now();
     const out = await run("echo started; sleep 30 & sleep 30", { timeout_seconds: 1 });

@@ -13,6 +13,7 @@ import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
 import { describeProject, projectBlock, projectFor, withProject } from "../repo/detect.js";
+import { dependencyLines, describeSetup, existingEnvironment, prepareEnvironment } from "../repo/env.js";
 import { describeRepoMap, repoMapFor, withRepoMap } from "../repo/map.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
@@ -38,6 +39,8 @@ export interface ReplOptions {
   workdir?: string;
   /** Where clones are kept (default: workspaces/ in the harness directory). */
   workspacesDir?: string;
+  /** Where dependency environments are kept (default: envs/ in the harness directory). */
+  envsDir?: string;
   /** Lets git clone private GitHub repositories and read their issues. */
   githubToken?: string;
   /** For tests: replaces the GitHub API's fetch. */
@@ -87,6 +90,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const tools = opts.tools ?? createDefaultTools();
   let repo: string | undefined;
   let workdir = path.resolve(opts.workdir ?? process.cwd());
+  /** The installed dependencies of the working directory, active in the agent's commands. */
+  let toolEnv = existingEnvironment(workdir, opts.envsDir);
   let history: Message[] = [];
   let inFlight: AbortController | undefined;
 
@@ -128,6 +133,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         tools,
         system: mode.system ?? agentSystemPrompt(workdir),
         root: workdir,
+        env: toolEnv,
         tracker,
         limits: config.limits,
         history: mode.history ?? history,
@@ -179,6 +185,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (isDirectory(target)) {
       repo = target;
       workdir = path.resolve(target);
+      toolEnv = existingEnvironment(workdir, opts.envsDir);
       history = []; // earlier tool results refer to the old directory
       print(`Working directory: ${workdir} (new conversation)`);
       return;
@@ -194,6 +201,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       const cloned = await cloneRepo(spec, { workspacesDir: opts.workspacesDir, githubToken: opts.githubToken, signal: inFlight.signal });
       repo = target;
       workdir = cloned.dir;
+      toolEnv = existingEnvironment(workdir, opts.envsDir);
       history = [];
       print(cloned.reused ? "Using the existing clone (make clean removes it for a fresh copy)." : `Cloned in ${(cloned.durationMs / 1000).toFixed(1)}s.`);
       print(`Working directory: ${workdir} (new conversation)`);
@@ -233,10 +241,24 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (map) print(describeRepoMap(map));
     const project = await projectFor(workdir);
     if (project) print(describeProject(project));
+    let setup;
+    if (project && config.installDeps) {
+      inFlight = new AbortController(); // Ctrl-C stops the install; the fix goes on without it
+      try {
+        setup = await prepareEnvironment(workdir, project, { envsDir: opts.envsDir, timeoutS: config.installTimeoutS, signal: inFlight.signal, onProgress: print });
+      } finally {
+        inFlight = undefined;
+      }
+      if (setup) {
+        print(describeSetup(setup));
+        toolEnv = setup.env;
+      }
+    }
 
     // A fix is its own conversation; afterwards the chat continues from it.
     const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
-    const result = await send(withRepoMap(withProject(taskPrompt(task), project), map), { system: fixSystemPrompt(workdir), history: [], review });
+    const message = withProject(taskPrompt(task), project, setup && dependencyLines(setup));
+    const result = await send(withRepoMap(message, map), { system: fixSystemPrompt(workdir), history: [], review });
     try {
       print((await completeFix(workdir, branch, task, result)).message);
     } catch (err) {

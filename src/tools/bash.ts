@@ -46,7 +46,7 @@ export const bash: Tool<BashInput> = {
     if (ctx.signal?.aborted) throw new ToolError("command cancelled");
 
     const timeoutS = Math.min(input.timeout_seconds ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
-    const result = await runCommand(command, root, timeoutS * 1000, ctx.signal);
+    const result = await runCommand(command, root, timeoutS * 1000, ctx.signal, commandEnv(ctx.env));
     if (result.cancelled) throw new ToolError("command cancelled");
 
     const seconds = (result.durationMs / 1000).toFixed(1);
@@ -59,7 +59,7 @@ export const bash: Tool<BashInput> = {
   },
 };
 
-interface CommandResult {
+export interface CommandResult {
   output: string;
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -68,13 +68,14 @@ interface CommandResult {
   durationMs: number;
 }
 
-function runCommand(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<CommandResult> {
+/** Runs a bash command in its own process group, so a timeout or cancel stops everything it started. */
+export function runCommand(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, env: NodeJS.ProcessEnv = commandEnv()): Promise<CommandResult> {
   const started = Date.now();
   const output = new OutputBuffer();
   return new Promise((resolve, reject) => {
     const child = spawn("bash", ["-c", command], {
       cwd,
-      env: commandEnv(),
+      env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true, // own process group, so the whole tree can be stopped
     });
@@ -180,7 +181,8 @@ function clean(text: string): string {
 /** Variables that look like credentials (AI_API_KEY, GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY, ...). */
 const SECRET_NAME = /(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)/i;
 
-export function commandEnv(): NodeJS.ProcessEnv {
+/** The environment for commands: the harness's own minus credentials, non-interactive, plus `extra` (e.g. the project's virtualenv). */
+export function commandEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     // The model's commands never see the harness's keys, so a prompt injection cannot send them anywhere.
@@ -196,6 +198,7 @@ export function commandEnv(): NodeJS.ProcessEnv {
     GIT_TERMINAL_PROMPT: "0",
     GIT_EDITOR: "true",
     DEBIAN_FRONTEND: "noninteractive",
+    ...extra,
   };
 }
 
