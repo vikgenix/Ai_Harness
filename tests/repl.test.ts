@@ -158,6 +158,7 @@ describe("interactive session", () => {
         if (call === 1) return reply("Hi."); // the chat message before /fix
         if (call === 2) return reply("", [{ id: "c1", name: "create_file", input: { path: "src/fix.py", content: "x = 1\n" } }]);
         if (call === 3) return reply("", [{ id: "f1", name: "finish", input: { outcome: "completed", summary: "Added src/fix.py." } }]);
+        if (call === 4) return reply("", [{ id: "f2", name: "finish", input: { outcome: "completed", summary: "Added src/fix.py." } }]); // after the self-review
         return reply("I would need more details."); // the second /fix: answers without finishing
       });
       const input = new PassThrough();
@@ -177,6 +178,7 @@ describe("interactive session", () => {
       // The repository map comes first in the task message.
       expect(out).toMatch(/Working on branch harness\/fix-7 \(from \w+\)\.\nRepo map: 2 files, 0 with symbols/);
       expect(first.role === "user" && first.content).toMatch(/^<repo_map>\n[^]*Files:\n {2}\.\/: README\.md\n {2}src\/: app\.py\n<\/repo_map>\n/);
+      expect(out).toContain("  ↻ Self-review: 1 file changed, 1 to check (No test file was added or changed).");
       expect(out).toContain("✓ Done: Added src/fix.py.");
       expect(out).toMatch(/Committed [0-9a-f]+ on branch harness\/fix-7 \(1 file: src\/fix\.py\)\./);
       const log = execFileSync("git", ["log", "-1", "--format=%s", "harness/fix-7"], { cwd: dir }).toString().trim();

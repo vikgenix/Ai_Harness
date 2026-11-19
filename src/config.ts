@@ -34,6 +34,8 @@ export interface HarnessConfig {
   refusalFallback: boolean;
   /** Size of the repository map given to /fix, in tokens; 0 turns it off. */
   repoMapTokens: number;
+  /** /fix: show the agent its diff for a self-review before accepting "completed". */
+  selfReview: boolean;
   /** undefined when the provider does not accept the setting. */
   temperature: number | undefined;
   seed: number | undefined;
@@ -126,6 +128,8 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
   }
   const refusalFallback = file.refusal_fallback ?? true;
   if (typeof refusalFallback !== "boolean") throw new ConfigError("'refusal_fallback' must be true or false.");
+  const selfReview = file.self_review ?? true;
+  if (typeof selfReview !== "boolean") throw new ConfigError("'self_review' must be true or false.");
 
   return {
     provider,
@@ -137,6 +141,7 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     effort: effortValue as Effort | undefined,
     refusalFallback,
     repoMapTokens: optionalNumber(file, "repo_map_tokens", 0, 50_000) ?? 3000,
+    selfReview,
     temperature: SUPPORTS_TEMPERATURE[provider] ? temperature : undefined,
     seed: SUPPORTS_SEED[provider] ? seed : undefined,
     limits: {

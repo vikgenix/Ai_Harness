@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { completeFix, fixPatch, FixError, startFix, type FixOutcome } from "./agent/fix.js";
+import { createSelfReview } from "./agent/review.js";
 import { runAgent } from "./agent/loop.js";
 import { fixSystemPrompt } from "./agent/prompt.js";
 import { describeTask, resolveTask, taskPrompt, taskText, type FixTask } from "./agent/task.js";
@@ -102,6 +103,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     print(s);
     atLineStart = true;
   };
+  const review = opts.config.selfReview ? createSelfReview(dir, fix) : undefined;
   const result = await runAgent({
     model: opts.model,
     tools: createDefaultTools(),
@@ -118,6 +120,13 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         if (r.isError) line(`    ✗ ${r.content.split("\n")[0]}`);
       },
     },
+    beforeFinish: review
+      ? async (input) => {
+          const r = await review.check(input);
+          if (r) line(`  ↻ ${r.note}`);
+          return r?.message;
+        }
+      : undefined,
   });
   if (!atLineStart) output.write("\n");
   if (result.finished) print(`\n${result.finished.outcome === "completed" ? "✓ Done" : "✗ Blocked"}: ${result.finished.summary}`);
@@ -157,6 +166,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     usage: result.usage,
     costUsd: result.costIncomplete ? null : result.costUsd,
     error: result.error?.message ?? null,
+    selfReview: review ? { rounds: review.rounds, findings: review.findings } : null,
     repoMap: map ? { files: map.files, detailedFiles: map.detailedFiles, symbols: map.symbols, chars: map.text.length, durationMs: map.durationMs } : null,
   };
   const saved = ["result.json", "transcript.json"];

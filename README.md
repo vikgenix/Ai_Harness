@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phase 2 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model (streaming, prompt caching, cost tracking), and runs an agent loop with tool calling. All Phase 2 tools are in: `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash` and `finish`. See [Roadmap](#roadmap).
+> **Status:** Phases 1–3 done. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, branch, reproduce → fix → verify, self-review, commit. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -43,9 +43,24 @@ Then:
 1. **Branch.** The working directory must be a git repository without uncommitted changes. The fix goes on a new branch, `harness/fix-123` (or `harness/<first-words-of-the-task>`), created from the default branch, so fixes never stack on each other or touch your branch.
 2. **Repository map.** The task message starts with a map of the repository: its source files with their classes, functions and methods and their line numbers, then the other files by path (see below).
 3. **Agent.** The agent gets a fix-specific system prompt and works alone through *understand → reproduce (failing test first) → fix at the root cause → verify with the tests → finish*. It is told never to run git commit/branch/checkout itself.
-4. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
+4. **Self-review.** The first time the agent finishes with `completed`, the harness holds the finish back and shows it its whole diff, with problems found automatically and a checklist (see below). The agent fixes what it finds and finishes again.
+5. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
 
 After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
+
+### Self-review
+
+Agents often finish with a working fix plus things that should not be committed: a `print` left from debugging, a `repro.py` scratch script, a reformatted file, or no regression test. Before a fix is accepted, the agent sees its whole diff against the base branch (new files included, caches left out) and what the harness found automatically:
+
+| Check | Example |
+|---|---|
+| Debugging leftovers in added lines | `print(`, `console.log(`, `breakpoint()`, `pdb`, `debugger`, `dbg!`, TODO/FIXME, merge conflict markers (prints are allowed in tests) |
+| Temporary files | new `repro*.py`, `scratch*`, `debug*`, `*.orig`, `*.rej`, `*.bak`, `*.log` |
+| Formatting-only changes | a file whose diff is empty when whitespace is ignored |
+| Tests | no test file added or changed; a test file deleted; fewer assertion lines than before |
+| Scope | more than 8 non-test files changed |
+
+The review runs in the same conversation, so it costs one extra step on an already-cached prompt rather than a separate model call. If the agent changes files after the review and problems remain, it is reviewed once more; after that the finish is accepted. It is skipped for `blocked`, and when the step or cost limit would leave no room to act on it. Set `self_review: false` in `config/model.yaml` to turn it off. The run record keeps the findings.
 
 ### Repository map
 
@@ -82,7 +97,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, repository map size |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
 | `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
@@ -174,7 +189,7 @@ src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
 src/repo/map.ts       repository map: tree-sitter symbols, ranked by the task, within a token budget
 src/headless.ts       fix without the UI: exit codes, run records in runs/
-src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, commit)
+src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
@@ -206,7 +221,7 @@ tests/                offline tests (vitest)
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
-| 3 🚧 | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ⬜ self-review |
+| 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
 | 4 | Installing the target repo's dependencies and detecting its test command |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |

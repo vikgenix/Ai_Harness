@@ -75,7 +75,11 @@ const finish = (outcome: string, summary: string): ToolCall => ({ id: `f-${outco
 
 describe("runHeadless", () => {
   it("clones, fixes on a branch, commits, saves the run and exits 0", async () => {
-    const model = scripted([[create("src/greet.py", "print('HELLO')\n")], [finish("completed", "Added src/greet.py. Tests: none.")]]);
+    const model = scripted([
+      [create("src/greet.py", "print('HELLO')\n")],
+      [finish("completed", "Added src/greet.py. Tests: none.")], // held back for the self-review
+      [finish("completed", "Added src/greet.py. Tests: none.")],
+    ]);
     const { code, out, runDir, clone } = await headless(model, { task: "make the greeting louder" });
 
     expect(code).toBe(EXIT.committed);
@@ -83,8 +87,9 @@ describe("runHeadless", () => {
     expect(out).toContain("Task: make the greeting louder\nWorking on branch harness/make-the-greeting-louder (from ");
     expect(out).toMatch(/\)\.\nRepo map: 2 files, 0 with symbols \(0 symbols\), ~\d+ tokens, [\d.]+s\.\n/);
     expect(out).toContain("  → create_file(path=src/greet.py, content=print('HELLO') )");
+    expect(out).toContain("  ↻ Self-review: 1 file changed, 2 to check (Added print/log statement; No test file was added or changed).");
     expect(out).toContain("✓ Done: Added src/greet.py. Tests: none.");
-    expect(out).toMatch(/\[claude-opus-5-5 · 2 steps · [\d.]+s · /);
+    expect(out).toMatch(/\[claude-opus-5-5 · 3 steps · [\d.]+s · /);
     expect(out).toMatch(/Committed [0-9a-f]+ on branch harness\/make-the-greeting-louder \(1 file: src\/greet\.py\)/);
     expect(out).toContain("(result.json, transcript.json, fix.patch)");
 
@@ -97,16 +102,20 @@ describe("runHeadless", () => {
       outcome: "completed",
       committed: true,
       files: ["src/greet.py"],
-      steps: 2,
+      steps: 3,
       model: "claude-opus-5-5",
       error: null,
     });
+    expect(record.selfReview.rounds).toBe(1);
+    expect(record.selfReview.findings).toHaveLength(2);
     expect(record.commit).toBe(execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: clone }).toString().trim());
     const patch = await readFile(path.join(runDir!, "fix.patch"), "utf8");
     expect(patch).toContain("Subject: [PATCH] Fix: make the greeting louder");
     expect(patch).toContain("+print('HELLO')");
     const transcript = JSON.parse(await readFile(path.join(runDir!, "transcript.json"), "utf8"));
-    expect(transcript.map((m: { role: string }) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant"]);
+    expect(transcript.map((m: { role: string }) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant", "tool", "assistant"]);
+    expect(transcript[4].results[0].content).toContain("Self-review: your finish call was held back");
+    expect(transcript[4].results[0].content).toContain("+print('HELLO')");
     expect(transcript[0].content).toMatch(/^<repo_map>\n[^]*<\/repo_map>\n[^]*Fix this in the repository:\n\nmake the greeting louder$/);
     expect(record.repoMap).toMatchObject({ files: 2, detailedFiles: 0 });
   });
@@ -134,7 +143,7 @@ describe("runHeadless", () => {
   it("works on a local directory as-is", async () => {
     const local = path.join(base, "local-repo");
     await makeSourceRepo(local);
-    const model = scripted([[create("new.txt", "hi\n")], [finish("completed", "Added new.txt.")]]);
+    const model = scripted([[create("new.txt", "hi\n")], [finish("completed", "Added new.txt.")], [finish("completed", "Added new.txt.")]]);
     const { code } = await headless(model, { repo: local, task: "add a file" });
     expect(code).toBe(EXIT.committed);
     expect(execFileSync("git", ["log", "-1", "--format=%s"], { cwd: local }).toString().trim()).toBe("Fix: add a file");

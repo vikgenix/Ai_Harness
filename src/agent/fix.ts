@@ -13,18 +13,18 @@ const BRANCH_PREFIX = "harness/";
  * never committed, even in a repository whose .gitignore misses them.
  */
 const JUNK_DIRS = ["__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".venv", "venv", "node_modules", ".cache"];
-const NOT_JUNK = ["--", ".", ...JUNK_DIRS.map((d) => `:(exclude,glob)**/${d}/**`), ":(exclude,glob)**/*.pyc"];
+export const NOT_JUNK = ["--", ".", ...JUNK_DIRS.map((d) => `:(exclude,glob)**/${d}/**`), ":(exclude,glob)**/*.pyc"];
 
 /** A problem the user should read, e.g. uncommitted changes before /fix. */
 export class FixError extends Error {
   override name = "FixError";
 }
 
-async function git(dir: string, args: string[]): Promise<string> {
+export async function git(dir: string, args: string[], env: Record<string, string> = {}): Promise<string> {
   try {
     const { stdout } = await run("git", args, {
       cwd: dir,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true" },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_EDITOR: "true", ...env },
       maxBuffer: 16 * 1024 * 1024,
     });
     return stdout.trimEnd();

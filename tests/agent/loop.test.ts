@@ -167,6 +167,32 @@ describe("runAgent", () => {
     expect(result.messages[2]).toMatchObject({ role: "tool", results: [{ isError: true }] });
   });
 
+  it("lets beforeFinish hold a finish back once, sending its message as the result", async () => {
+    const { model, requests } = scripted([{ toolCalls: [finishCall("f1")] }, { toolCalls: [finishCall("f2", "completed", "Revised.")] }]);
+    const asked: string[] = [];
+    const result = await runAgent(
+      options(model, {
+        beforeFinish: async (input) => {
+          asked.push(input.summary);
+          return asked.length === 1 ? "Review your diff first." : undefined;
+        },
+      }),
+    );
+    expect(asked).toEqual(["Changed hello.py; tests pass.", "Revised."]);
+    expect(requests[1]!.messages[2]).toMatchObject({ role: "tool", results: [{ callId: "f1", content: "Review your diff first.", isError: false }] });
+    expect(result).toMatchObject({ status: "finished", steps: 2, finished: { summary: "Revised." } });
+  });
+
+  it("does not ask beforeFinish when no step is left, or when finish failed", async () => {
+    let calls = 0;
+    const beforeFinish = async () => (calls++, "again");
+    const last = await runAgent(options(scripted([{ toolCalls: [view("t1")] }, { toolCalls: [finishCall("f1")] }]).model, { beforeFinish, limits: { maxSteps: 2, maxCostUsd: 100 } }));
+    expect(last.status).toBe("finished");
+    const invalid = await runAgent(options(scripted([{ toolCalls: [{ id: "f1", name: "finish", input: { outcome: "maybe", summary: "x" } }] }, { content: "ok" }]).model, { beforeFinish }));
+    expect(invalid.status).toBe("done");
+    expect(calls).toBe(0);
+  });
+
   it("reports model errors and cancellation as a status", async () => {
     const auth = await runAgent(options(scripted([{ error: new ModelError("auth", "bad key", 401) }]).model));
     expect(auth.status).toBe("error");

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { runAgent, type AgentResult } from "../agent/loop.js";
 import { completeFix, FixError, startFix } from "../agent/fix.js";
+import { createSelfReview, type SelfReview } from "../agent/review.js";
 import { agentSystemPrompt, fixSystemPrompt } from "../agent/prompt.js";
 import { describeTask, resolveTask, taskPrompt, taskText } from "../agent/task.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
@@ -102,7 +103,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   });
 
   /** Runs the agent on `text` and shows its progress. `mode` replaces the chat's system prompt and history (used by /fix). */
-  async function send(text: string, mode: { system?: string; history?: Message[] } = {}): Promise<AgentResult> {
+  async function send(text: string, mode: { system?: string; history?: Message[]; review?: SelfReview } = {}): Promise<AgentResult> {
     inFlight = new AbortController();
     const started = Date.now();
     // Tool lines must start on a fresh line even if streamed text didn't end with one.
@@ -137,6 +138,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             if (r.isError) line(dim(`    ✗ ${r.content.split("\n")[0]}`));
           },
         },
+        beforeFinish: mode.review
+          ? async (input) => {
+              const r = await mode.review!.check(input);
+              if (r) line(dim(`  ↻ ${r.note}`));
+              return r?.message;
+            }
+          : undefined,
       });
 
       // A run that failed before any reply leaves no trace, so the next message starts clean.
@@ -222,7 +230,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (map) print(describeRepoMap(map));
 
     // A fix is its own conversation; afterwards the chat continues from it.
-    const result = await send(withRepoMap(taskPrompt(task), map), { system: fixSystemPrompt(workdir), history: [] });
+    const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
+    const result = await send(withRepoMap(taskPrompt(task), map), { system: fixSystemPrompt(workdir), history: [], review });
     try {
       print((await completeFix(workdir, branch, task, result)).message);
     } catch (err) {

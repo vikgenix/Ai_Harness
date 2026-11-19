@@ -313,7 +313,8 @@ function makeQuery(text: string): Query {
   return { words: new Set(words(text)), identifiers, text: text.toLowerCase() };
 }
 
-const isTest = (file: string) => /(^|\/)(tests?|spec|__tests__)\/|(^|[/_.-])(test|spec)s?[_.-]|_test\.[a-z]+$/i.test(file);
+/** True for test files and files in test directories: tests/x.py, test_x.py, x.test.ts, x_test.go. */
+export const isTestPath = (file: string) => /(^|\/)(tests?|spec|__tests__)\/|(^|[/_.-])(test|spec)s?[_.-]|_test\.[a-z]+$/i.test(file);
 
 /**
  * Weight of each task word: 1 for a word only a few files have, near 0 for
@@ -459,7 +460,7 @@ export async function buildRepoMap(root: string, opts: RepoMapOptions): Promise<
   const wordWeights = weights(q.words, parsed.map((e) => new Set(e.symbols!.flatMap((s) => words(s.name)))));
   for (const entry of parsed) entry.score += symbolScore(entry.symbols!, q, nameWeights, wordWeights);
   // The code under test comes first; tests the task mentions still rank well.
-  for (const entry of entries) if (isTest(entry.file)) entry.score = entry.score / 2 - 0.5;
+  for (const entry of entries) if (isTestPath(entry.file)) entry.score = entry.score / 2 - 0.5;
 
   // Detailed blocks for the most relevant files that fit, then plain paths for the rest.
   const header = "Repository map: source files with their classes and functions (line numbers first), then the other files.";

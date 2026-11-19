@@ -39,6 +39,12 @@ export interface AgentOptions {
   task: string;
   signal?: AbortSignal;
   events?: AgentEvents;
+  /**
+   * Called when the model calls finish. Returning a message holds the finish
+   * back: the message is sent as the tool result and the run goes on (used for
+   * the self-review in /fix). Not called when no step or budget is left.
+   */
+  beforeFinish?(input: FinishInput): Promise<string | undefined>;
 }
 
 export interface AgentResult {
@@ -106,21 +112,29 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     if (calls.length === 0) return end("done");
 
     const results: ToolResult[] = [];
+    const heldBack = new Set<string>();
     for (const call of calls) {
       events?.onToolCall?.(call);
       const started = Date.now();
-      const result =
+      let result: ToolResult =
         call.name === FINISH_TOOL && calls.length > 1
           ? // The model has not seen the other results yet (e.g. failing tests), so it cannot know it is done.
             { callId: call.id, name: call.name, content: "Error: call finish on its own, after you have seen the results of your other tool calls", isError: true }
           : await tools.run(call, { root: opts.root, signal });
+      if (call.name === FINISH_TOOL && !result.isError && opts.beforeFinish && steps < limits.maxSteps && costUsd < limits.maxCostUsd && !signal?.aborted) {
+        const objection = await opts.beforeFinish(call.input as FinishInput);
+        if (objection !== undefined) {
+          result = { callId: call.id, name: call.name, content: objection, isError: false };
+          heldBack.add(call.id);
+        }
+      }
       results.push(result);
       events?.onToolResult?.(result, Date.now() - started);
     }
     messages.push({ role: "tool", results });
     if (signal?.aborted) return end("cancelled");
 
-    const done = results.find((r) => r.name === FINISH_TOOL && !r.isError);
+    const done = results.find((r) => r.name === FINISH_TOOL && !r.isError && !heldBack.has(r.callId));
     if (done) {
       const finished = calls.find((c) => c.id === done.callId)!.input as FinishInput;
       finalText = finished.summary;

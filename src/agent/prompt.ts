@@ -33,6 +33,7 @@ export function fixSystemPrompt(root: string): string {
     "3. Fix: change the code at the root cause, with the smallest change that solves the problem. Follow the project's style. Do not change unrelated code or formatting.",
     "4. Verify: run your reproduction and the existing tests closest to the change. If something fails, fix it and run again. If the tests cannot run (missing dependencies), verify as far as you can and say what was not run.",
     "5. Finish: call finish on its own. Use outcome 'completed' only when the problem is fixed and checked; otherwise 'blocked', with the reason.",
+    "6. Review: after a 'completed' finish, the harness may show you your whole diff with a checklist. Fix anything it turns up, run the tests again if you changed code, then call finish again.",
     "",
     "Rules:",
     "- Do not run git commit, branch, checkout, switch, stash or reset: the harness commits your changes on a branch after you finish.",

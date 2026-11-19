@@ -34,6 +34,11 @@ refusal_fallback: true
 # fewer steps exploring. Size in tokens; 0 turns it off.
 repo_map_tokens: 3000
 
+# Self-review: when the agent says a fix is complete, show it its whole diff
+# with automatic checks (debugging leftovers, scratch files, missing or weakened
+# tests) once before accepting. Costs one extra step.
+self_review: true
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0

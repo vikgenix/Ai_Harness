@@ -127,6 +127,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nrepo_map_tokens: -5\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/repo_map_tokens/);
   });
 
+  it("reads self_review: on by default", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } }).selfReview).toBe(true);
+    expect(loadConfig({ configPath: yamlFile(`${BASE}\nself_review: false\n`), env: { AI_API_KEY: "sk-fake" } }).selfReview).toBe(false);
+    expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nself_review: maybe\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/self_review/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);
