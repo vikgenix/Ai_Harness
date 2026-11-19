@@ -13,6 +13,7 @@ import { GitHubError } from "./github/issues.js";
 import { formatUsage, type UsageTracker } from "./model/cost.js";
 import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
+import { describeProject, projectFor, withProject } from "./repo/detect.js";
 import { describeRepoMap, repoMapFor, withRepoMap } from "./repo/map.js";
 import { createDefaultTools } from "./tools/index.js";
 import { describeCall } from "./ui/repl.js";
@@ -89,6 +90,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   print(`Working on branch ${fix.branch} (from ${fix.baseName}).`);
   const map = await repoMapFor(dir, taskText(task), opts.config.repoMapTokens, opts.signal);
   if (map) print(describeRepoMap(map));
+  const project = await projectFor(dir);
+  if (project) print(describeProject(project));
   print();
 
   // 3. Agent. Model text is streamed; tool calls are shown one per line.
@@ -111,7 +114,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     root: dir,
     tracker: opts.tracker,
     limits: opts.config.limits,
-    task: withRepoMap(taskPrompt(task), map),
+    task: withRepoMap(withProject(taskPrompt(task), project), map),
     signal: opts.signal,
     events: {
       onText: write,
@@ -119,6 +122,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       onToolResult: (r) => {
         if (r.isError) line(`    ✗ ${r.content.split("\n")[0]}`);
       },
+      onRejectedToolCall: (detail) => line(`    ✗ tool call rejected by the API, retrying: ${detail}`),
     },
     beforeFinish: review
       ? async (input) => {
@@ -167,6 +171,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     costUsd: result.costIncomplete ? null : result.costUsd,
     error: result.error?.message ?? null,
     selfReview: review ? { rounds: review.rounds, findings: review.findings } : null,
+    project: project
+      ? { ecosystems: project.ecosystems.map((e) => ({ name: e.name, dir: e.dir, packageManager: e.packageManager ?? null, test: e.test?.command ?? null })), tools: project.tools }
+      : null,
     repoMap: map ? { files: map.files, detailedFiles: map.detailedFiles, symbols: map.symbols, chars: map.text.length, durationMs: map.durationMs } : null,
   };
   const saved = ["result.json", "transcript.json"];

@@ -98,6 +98,14 @@ describe("GeminiClient.chat", () => {
     expect(res.message.content).toBe("answer");
   });
 
+  it("reports a malformed function call as a rejected tool call", async () => {
+    const chunk = { candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL", finishMessage: "Malformed function call: search(query=...)" }] };
+    await expect(new GeminiClient(base, fakeClient([chunk])).chat({ system: "", messages: [] })).rejects.toMatchObject({
+      kind: "invalid_tool_call",
+      detail: "Malformed function call: search(query=...)",
+    });
+  });
+
   it("reports blocked prompts and safety stops as refusals", async () => {
     const blocked = fakeClient([{ promptFeedback: { blockReason: "SAFETY" } }]);
     expect((await new GeminiClient(base, blocked).chat({ system: "", messages: [] })).stopReason).toBe("refusal");

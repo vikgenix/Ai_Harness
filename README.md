@@ -23,6 +23,7 @@ Inside the harness, type a request about the code in the working directory (by d
 /fix owner/project#123        # or an issue URL
 /fix parser crashes on empty input   # a task in your own words
 /map [words]                  # show the repository map (files related to the words first)
+/project                      # show how the project is built and tested
 /cost                         # tokens and cost so far
 /clear                        # start a new conversation
 /config                       # show provider and model
@@ -41,12 +42,32 @@ Inside the harness, type a request about the code in the working directory (by d
 Then:
 
 1. **Branch.** The working directory must be a git repository without uncommitted changes. The fix goes on a new branch, `harness/fix-123` (or `harness/<first-words-of-the-task>`), created from the default branch, so fixes never stack on each other or touch your branch.
-2. **Repository map.** The task message starts with a map of the repository: its source files with their classes, functions and methods and their line numbers, then the other files by path (see below).
+2. **Repository map and project setup.** The task message starts with a map of the repository (its source files with their classes, functions and methods and their line numbers, then the other files by path) and how the project is built and tested (see below).
 3. **Agent.** The agent gets a fix-specific system prompt and works alone through *understand → reproduce (failing test first) → fix at the root cause → verify with the tests → finish*. It is told never to run git commit/branch/checkout itself.
 4. **Self-review.** The first time the agent finishes with `completed`, the harness holds the finish back and shows it its whole diff, with problems found automatically and a checklist (see below). The agent fixes what it finds and finishes again.
 5. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
 
 After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
+
+### Project detection
+
+The harness reads the project files to tell the agent how the tests run, so it does not spend steps finding out:
+
+```
+Project: Python (uv) · tests: python3 -m pytest
+```
+
+| Ecosystem | Detected from | Test command |
+|---|---|---|
+| Python | `pyproject.toml`, `setup.py`/`setup.cfg`, `Pipfile`, `requirements*.txt`; package manager from `uv.lock`, `poetry.lock`, `Pipfile`, `pdm.lock` | `python -m pytest` when pytest is configured or listed; `tests/runtests.py` or `manage.py test` (Django); `unittest discover` otherwise |
+| Node.js | `package.json` (its `test` script, ignoring npm's placeholder); package manager from `packageManager` or the lockfile | `npm`/`pnpm`/`yarn test`, `bun run test`, or the test framework (vitest, jest, mocha) |
+| Go · Rust | `go.mod` · `Cargo.toml` | `go test ./...` · `cargo test` |
+| Java/Kotlin | `pom.xml` · `build.gradle(.kts)` | `./mvnw test` or `mvn test` · `./gradlew test` or `gradle test` |
+| Ruby · PHP · .NET | `Gemfile` · `composer.json`, `phpunit.xml` · `*.sln`, `*.csproj` | `bundle exec rspec` or `rake test` · `composer test` or `vendor/bin/phpunit` · `dotnet test` |
+
+It also notes how to run a single test, the install command, the required runtime version (`requires-python`, `engines.node`, `go.mod`, ...), test commands used in `.github/workflows`, a Makefile `test` target and `tox.ini`. Projects in first-level directories (`backend/`, `frontend/`) are found too. Finally, it checks which tools (`python3`, `node`, `uv`, `go`, ...) are installed and their versions, so a missing one is flagged up front.
+
+Nothing from the repository is run: files are only read, and tool versions are checked from outside the repository (so version files and Go toolchain switches in it have no effect). Installing dependencies comes next (Phase 4.2).
 
 ### Self-review
 
@@ -97,7 +118,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
 | `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
@@ -144,7 +165,7 @@ export AI_PROVIDER=openai-compatible AI_BASE_URL=http://localhost:11434/v1 AI_MO
 - **Prompt caching** is on for every provider: explicit `cache_control` for Anthropic, a stable `prompt_cache_key` for OpenAI, and the automatic caches of Gemini and others. The usage line after each reply shows how many tokens came from the cache.
 - **Cost** is computed from the `pricing` table in the config (USD per 1M tokens). Models missing from the table still work; their cost shows as unknown.
 - **Refusal fallback** (Anthropic): if a safety filter declines a request, the API retries it on another Claude model. Set `refusal_fallback: false` to turn it off.
-- **Retries**: rate limits, overloads and network errors are retried by each provider's SDK, up to `limits.max_retries` times.
+- **Retries**: rate limits, overloads and network errors are retried by each provider's SDK, up to `limits.max_retries` times. Some hosts (Groq) check tool calls against the tool's schema and reject the whole reply when one does not match, and Gemini can return a malformed call. The harness then tells the model what was wrong and lets it try again, up to 3 times in a row.
 
 ## Tools
 
@@ -188,6 +209,7 @@ src/providers.ts      provider list, endpoints, key-prefix detection
 src/cli/args.ts       command-line options
 src/repo/clone.ts     parses repository URLs, clones into workspaces/
 src/repo/map.ts       repository map: tree-sitter symbols, ranked by the task, within a token budget
+src/repo/detect.ts    project detection: ecosystems, test commands, installed tools
 src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
@@ -222,7 +244,7 @@ tests/                offline tests (vitest)
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
-| 4 | Installing the target repo's dependencies and detecting its test command |
+| 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ⬜ install dependencies in an isolated environment · ⬜ baseline test run · ⬜ optional Docker sandbox |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |
 | 7 | `make eval` on SWE-bench Lite |

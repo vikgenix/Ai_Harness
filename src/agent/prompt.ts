@@ -28,7 +28,7 @@ export function fixSystemPrompt(root: string): string {
     `Repository root: ${root}`,
     "",
     "Work in this order:",
-    "1. Understand: read the task, then find the relevant code. Start from the repository map in the task message, if there is one, then use search, find_files and view_file. Find out how the project runs its tests (README, CONTRIBUTING, package.json, pyproject.toml, Makefile, CI config).",
+    "1. Understand: read the task, then find the relevant code. Start from the repository map in the task message, if there is one, then use search, find_files and view_file. Run the tests with the command detected in the <project> block; if it fails or there is none, check how the project runs them (README, CONTRIBUTING, CI config).",
     "2. Reproduce: before changing code, show the problem with a failing test (preferred: in the project's test suite and style) or a small script, and run it with bash. If you cannot reproduce it, say so in the summary.",
     "3. Fix: change the code at the root cause, with the smallest change that solves the problem. Follow the project's style. Do not change unrelated code or formatting.",
     "4. Verify: run your reproduction and the existing tests closest to the change. If something fails, fix it and run again. If the tests cannot run (missing dependencies), verify as far as you can and say what was not run.",

@@ -118,6 +118,8 @@ describe("runHeadless", () => {
     expect(transcript[4].results[0].content).toContain("+print('HELLO')");
     expect(transcript[0].content).toMatch(/^<repo_map>\n[^]*<\/repo_map>\n[^]*Fix this in the repository:\n\nmake the greeting louder$/);
     expect(record.repoMap).toMatchObject({ files: 2, detailedFiles: 0 });
+    expect(record.project).toEqual({ ecosystems: [], tools: {} });
+    expect(out).toContain("Project: no known project files found.");
   });
 
   it("exits 1 and commits nothing when the agent is blocked", async () => {
@@ -137,7 +139,7 @@ describe("runHeadless", () => {
     const { out, runDir } = await headless(model, { task: "no map please", config: { ...config, repoMapTokens: 0 } });
     expect(out).not.toContain("Repo map:");
     const transcript = JSON.parse(await readFile(path.join(runDir!, "transcript.json"), "utf8"));
-    expect(transcript[0].content).toBe("Fix this in the repository:\n\nno map please");
+    expect(transcript[0].content).toMatch(/^<project>\n[^]*\n<\/project>\n\nFix this in the repository:\n\nno map please$/);
   });
 
   it("works on a local directory as-is", async () => {

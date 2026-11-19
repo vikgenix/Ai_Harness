@@ -176,7 +176,9 @@ describe("interactive session", () => {
       const first = requests[1]!.messages[0]!;
       expect(first.role === "user" && first.content).toContain("<issue>\n# Crash on empty input");
       // The repository map comes first in the task message.
-      expect(out).toMatch(/Working on branch harness\/fix-7 \(from \w+\)\.\nRepo map: 2 files, 0 with symbols/);
+      expect(out).toMatch(/Working on branch harness\/fix-7 \(from \w+\)\.\nRepo map: 2 files, 0 with symbols.*\nProject: no known project files found\.\n/);
+      expect(first.role === "user" && first.content).toContain("</repo_map>\nThe map above was generated");
+      expect(first.role === "user" && first.content).toMatch(/<project>\nNo known project files[^]*<\/project>\n\nFix GitHub issue #7/);
       expect(first.role === "user" && first.content).toMatch(/^<repo_map>\n[^]*Files:\n {2}\.\/: README\.md\n {2}src\/: app\.py\n<\/repo_map>\n/);
       expect(out).toContain("  ↻ Self-review: 1 file changed, 1 to check (No test file was added or changed).");
       expect(out).toContain("✓ Done: Added src/fix.py.");
@@ -259,6 +261,21 @@ describe("interactive session", () => {
       expect(requests[0]!.system).toContain(dir.split(path.sep).pop()!);
       expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash", "finish"]);
       expect(requests[1]!.messages[2]).toMatchObject({ role: "tool", results: [{ content: "1\tprint('hi')" }] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("/project shows how the project is built and tested, without calling the model", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-"));
+    try {
+      await writeFile(path.join(dir, "go.mod"), "module demo\n\ngo 1.22\n");
+      const { model, requests } = fakeModel();
+      const { out } = await run(["/project", "/exit"], model, undefined, dir);
+      expect(out).toContain("Detected from the project files (check them if a command fails):\n- Go (go.mod, requires 1.22)\n  Tests: go test ./...  (go.mod)");
+      expect(out).toMatch(/\nProject: Go · tests: go test \.\/\.\.\./);
+      expect(out).not.toContain("<project>");
+      expect(requests).toHaveLength(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

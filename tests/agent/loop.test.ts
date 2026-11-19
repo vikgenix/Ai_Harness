@@ -193,6 +193,31 @@ describe("runAgent", () => {
     expect(calls).toBe(0);
   });
 
+  it("tells the model when the provider rejects its tool call, and lets it retry", async () => {
+    const rejected = new ModelError("invalid_tool_call", "parameters for tool search did not match schema: missing properties: 'pattern'");
+    const { model, requests } = scripted([{ error: rejected }, { toolCalls: [view("t1")] }, { error: rejected }, { content: "It prints hi." }]);
+    const seen: string[] = [];
+    const result = await runAgent(options(model, { events: { onRejectedToolCall: (d) => seen.push(d) } }));
+
+    expect(result).toMatchObject({ status: "done", steps: 4, finalText: "It prints hi." });
+    expect(seen).toHaveLength(2);
+    // First rejection: joined to the task message; later: its own user turn after the tool results.
+    const first = requests[1]!.messages;
+    expect(first).toHaveLength(1);
+    expect(first[0]!.role === "user" && first[0]!.content).toMatch(/^what does hello\.py print\?\n\n\[harness\] Your last reply was rejected by the model API, so no tool ran: .*missing properties: 'pattern'/);
+    const later = requests[3]!.messages;
+    expect(later.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user"]);
+    expect(later[3]!.role === "user" && later[3]!.content).toContain("Call each tool only with the parameters listed in its schema");
+  });
+
+  it("stops after too many rejected tool calls in a row", async () => {
+    const rejected = new ModelError("invalid_tool_call", "bad call");
+    const result = await runAgent(options(scripted([{ error: rejected }, { error: rejected }, { error: rejected }, { error: rejected }, { content: "never" }]).model));
+    expect(result.status).toBe("error");
+    expect(result.error?.kind).toBe("invalid_tool_call");
+    expect(result.steps).toBe(3);
+  });
+
   it("reports model errors and cancellation as a status", async () => {
     const auth = await runAgent(options(scripted([{ error: new ModelError("auth", "bad key", 401) }]).model));
     expect(auth.status).toBe("error");

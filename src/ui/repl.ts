@@ -12,6 +12,7 @@ import { GitHubError } from "../github/issues.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
+import { describeProject, projectBlock, projectFor, withProject } from "../repo/detect.js";
 import { describeRepoMap, repoMapFor, withRepoMap } from "../repo/map.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
@@ -19,6 +20,7 @@ const HELP = `Type a request about the code in the working directory, or a comma
   /repo <url|dir>    clone a repository (or open a local directory) to work in
   /fix <n|url|text>  fix an issue number, issue URL or described bug
   /map [words]       show the repository map (files most related to the words first)
+  /project           show how the project is built and tested (detected from its files)
   /cost              tokens and cost so far this session
   /clear             start a new conversation
   /config            show the active model configuration
@@ -137,6 +139,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           onToolResult: (r) => {
             if (r.isError) line(dim(`    ✗ ${r.content.split("\n")[0]}`));
           },
+          onRejectedToolCall: (detail) => line(dim(`    ✗ tool call rejected by the API, retrying: ${detail}`)),
         },
         beforeFinish: mode.review
           ? async (input) => {
@@ -228,10 +231,12 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
     const map = await repoMapFor(workdir, taskText(task), config.repoMapTokens);
     if (map) print(describeRepoMap(map));
+    const project = await projectFor(workdir);
+    if (project) print(describeProject(project));
 
     // A fix is its own conversation; afterwards the chat continues from it.
     const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
-    const result = await send(withRepoMap(taskPrompt(task), map), { system: fixSystemPrompt(workdir), history: [], review });
+    const result = await send(withRepoMap(withProject(taskPrompt(task), project), map), { system: fixSystemPrompt(workdir), history: [], review });
     try {
       print((await completeFix(workdir, branch, task, result)).message);
     } catch (err) {
@@ -296,6 +301,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           // Shown even when the map is turned off for /fix, at the default size.
           const map = await repoMapFor(workdir, arg, config.repoMapTokens || 3000);
           print(map ? `${map.text}\n\n${describeRepoMap(map)}` : "Could not build the repository map.");
+          break;
+        }
+        case "/project": {
+          const project = await projectFor(workdir);
+          print(project ? `${projectBlock(project).replace(/^<project>\n|\n<\/project>$/g, "")}\n\n${describeProject(project)}` : "Could not read the project files.");
           break;
         }
         case "/fix":

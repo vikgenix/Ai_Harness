@@ -198,6 +198,10 @@ export function toModelError(err: unknown): ModelError {
   if (err instanceof OpenAI.APIConnectionError) return new ModelError("network", err.message, undefined, opts);
   if (err instanceof OpenAI.APIError) {
     const detail = err.message;
+    // Groq (and some other hosts) check tool calls against the schema and reject the whole reply.
+    if (err.code === "tool_use_failed" || /tool call validation failed|tool_use_failed/i.test(detail)) {
+      return new ModelError("invalid_tool_call", detail, err.status, opts);
+    }
     if (err instanceof OpenAI.AuthenticationError || err instanceof OpenAI.PermissionDeniedError) {
       return new ModelError("auth", detail, err.status, opts);
     }

@@ -90,6 +90,7 @@ export class GeminiClient implements ModelClient {
       const toolCalls: ToolCall[] = [];
       let text = "";
       let finish: string | undefined;
+      let finishMessage: string | undefined;
       let blocked = false;
       let usage: GenerateContentResponseUsageMetadata | undefined;
       let model = this.model;
@@ -100,6 +101,7 @@ export class GeminiClient implements ModelClient {
         if (chunk.usageMetadata) usage = chunk.usageMetadata;
         const candidate = chunk.candidates?.[0];
         if (candidate?.finishReason) finish = candidate.finishReason;
+        if (candidate?.finishMessage) finishMessage = candidate.finishMessage;
         for (const part of candidate?.content?.parts ?? []) {
           addPart(parts, part);
           if (part.text && !part.thought) {
@@ -111,6 +113,11 @@ export class GeminiClient implements ModelClient {
             toolCalls.push({ id: fc.id ?? `${LOCAL_ID_PREFIX}${toolCalls.length}`, name: fc.name ?? "", input: fc.args ?? {} });
           }
         }
+      }
+
+      // A tool call Gemini could not turn into valid arguments: the reply has no usable call.
+      if (finish === "MALFORMED_FUNCTION_CALL" || finish === "UNEXPECTED_TOOL_CALL") {
+        throw new ModelError("invalid_tool_call", finishMessage ?? finish);
       }
 
       return {

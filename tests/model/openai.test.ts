@@ -161,6 +161,14 @@ describe("toModelError (OpenAI)", () => {
     expect(toModelError(gen(status)).kind).toBe(kind);
   });
 
+  it("recognizes a tool call the host rejected against the schema (Groq tool_use_failed)", () => {
+    const groq = OpenAI.APIError.generate(400, { error: { message: "tool call validation failed: parameters for tool search did not match schema", code: "tool_use_failed" } }, undefined, new Headers());
+    expect(toModelError(groq)).toMatchObject({ kind: "invalid_tool_call", detail: expect.stringContaining("did not match schema") });
+    // In a stream the error arrives without a status or code, only the message.
+    const streamed = new OpenAI.APIError(undefined, undefined, "Tool call validation failed: tool call validation failed: missing properties: 'pattern'", undefined);
+    expect(toModelError(streamed).kind).toBe("invalid_tool_call");
+  });
+
   it("classifies connection problems and cancellation", () => {
     expect(toModelError(new OpenAI.APIConnectionTimeoutError()).kind).toBe("timeout");
     expect(toModelError(new OpenAI.APIConnectionError({ message: "ECONNREFUSED" })).kind).toBe("network");

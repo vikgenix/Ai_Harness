@@ -12,6 +12,7 @@ export type ModelErrorKind =
   | "network"
   | "aborted" // cancelled by the user
   | "invalid_output" // the model produced output that could not be parsed (e.g. broken tool JSON)
+  | "invalid_tool_call" // the provider rejected a tool call that did not match the tool's parameters
   | "unknown";
 
 const HINTS: Record<ModelErrorKind, string> = {
@@ -24,6 +25,7 @@ const HINTS: Record<ModelErrorKind, string> = {
   network: "Could not reach the provider. Check the network or base_url.",
   aborted: "The request was cancelled.",
   invalid_output: "The model's reply could not be parsed. Retrying usually helps.",
+  invalid_tool_call: "The model kept calling a tool with input that does not match its parameters.",
   unknown: "Unexpected error from the provider.",
 };
 

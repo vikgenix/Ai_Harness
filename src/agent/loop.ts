@@ -6,6 +6,8 @@ import type { ToolRegistry } from "../tools/registry.js";
 
 /** How many times a turn is re-sent when the model's output can't be parsed. */
 const MAX_INVALID_OUTPUT_RETRIES = 2;
+/** Tool calls rejected by the provider in a row before the run stops. */
+const MAX_REJECTED_TOOL_CALLS = 3;
 
 export type AgentStatus =
   | "done" // the model answered without asking for more tools
@@ -22,6 +24,8 @@ export interface AgentEvents {
   onText?(delta: string): void;
   onToolCall?(call: ToolCall): void;
   onToolResult?(result: ToolResult, durationMs: number): void;
+  /** The provider rejected the reply because a tool call did not match its schema; the model is told why and retries. */
+  onRejectedToolCall?(detail: string): void;
   /** After each model response, with its cost (undefined if the model has no price). */
   onResponse?(response: ChatResponse, costUsd: number | undefined): void;
 }
@@ -78,6 +82,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
   let costIncomplete = false;
   let steps = 0;
   let finalText = "";
+  let rejectedInARow = 0;
 
   const end = (status: AgentStatus, error?: ModelError, finished?: FinishInput): AgentResult => {
     closeOpenCalls(messages, status);
@@ -93,10 +98,20 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
       res = await chatWithRetry(model, { system: opts.system, messages, tools: specs, signal, onText: events?.onText });
     } catch (err) {
       if (!(err instanceof ModelError)) throw err;
+      // The provider refused a tool call that did not match the schema (no tool ran):
+      // tell the model what was wrong, as for input the registry rejects, and let it retry.
+      if (err.kind === "invalid_tool_call" && rejectedInARow < MAX_REJECTED_TOOL_CALLS && !signal?.aborted) {
+        rejectedInARow++;
+        steps++;
+        events?.onRejectedToolCall?.(err.detail);
+        addUserNote(messages, rejectionNote(err.detail));
+        continue;
+      }
       return end(err.kind === "aborted" ? "cancelled" : "error", err.kind === "aborted" ? undefined : err);
     }
 
     steps++;
+    rejectedInARow = 0;
     messages.push(res.message);
     finalText = res.message.content;
     addUsage(usage, res.usage);
@@ -143,6 +158,20 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
       return end("finished", undefined, finished);
     }
   }
+}
+
+function rejectionNote(detail: string): string {
+  return [
+    `[harness] Your last reply was rejected by the model API, so no tool ran: ${detail}`,
+    "Call each tool only with the parameters listed in its schema (names and types exactly as given), then continue.",
+  ].join("\n");
+}
+
+/** Adds a note for the model as a user turn, joined to the previous one if that is a user turn too. */
+function addUserNote(messages: Message[], note: string): void {
+  const last = messages[messages.length - 1];
+  if (last?.role === "user") last.content = `${last.content}\n\n${note}`;
+  else messages.push({ role: "user", content: note });
 }
 
 /** Re-sends a turn whose output could not be parsed (e.g. broken streamed tool JSON). */
