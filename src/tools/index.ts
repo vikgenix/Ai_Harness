@@ -5,7 +5,7 @@ import { findFiles } from "./find_files.js";
 import { finish } from "./finish.js";
 import { listDir } from "./list_dir.js";
 import { ToolRegistry } from "./registry.js";
-import { search } from "./search.js";
+import { grep } from "./grep.js";
 import { viewFile } from "./view_file.js";
 
 export { ToolRegistry } from "./registry.js";
@@ -13,5 +13,5 @@ export type { Tool, ToolContext } from "./types.js";
 
 /** The tools the agent gets. New tools are added here, one at a time. */
 export function createDefaultTools(): ToolRegistry {
-  return new ToolRegistry([viewFile, listDir, search, findFiles, editFile, createFile, bash, finish]);
+  return new ToolRegistry([viewFile, listDir, grep, findFiles, editFile, createFile, bash, finish]);
 }

@@ -4,16 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { globToRegExp, listFiles, matchesGlob } from "../../src/tools/files.js";
-import { MAX_COUNTED, MAX_SHOWN, search } from "../../src/tools/search.js";
+import { grep, MAX_COUNTED, MAX_SHOWN } from "../../src/tools/grep.js";
 import { ToolError } from "../../src/tools/types.js";
 
 let base: string;
 let root: string; // plain directory: files are found by walking
 let gitRoot: string; // git repository: .gitignore applies
-const run = (input: Parameters<typeof search.run>[0], r = root) => search.run(input, { root: r });
+const run = (input: Parameters<typeof grep.run>[0], r = root) => grep.run(input, { root: r });
 
 beforeAll(async () => {
-  base = await mkdtemp(path.join(tmpdir(), "harness-search-"));
+  base = await mkdtemp(path.join(tmpdir(), "harness-grep-"));
   root = path.join(base, "repo");
   await mkdir(path.join(root, "src/lib"), { recursive: true });
   await mkdir(path.join(root, "node_modules/dep"), { recursive: true });
@@ -44,7 +44,7 @@ afterAll(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-describe("search", () => {
+describe("grep", () => {
   it("finds regex matches as path:line: text, skipping dependencies, binaries and symlinks", async () => {
     expect(await run({ pattern: "def parse_\\w+" })).toBe(
       ["src/app.py:3: def parse_args(argv):", "src/app.py:6: def parse_config(path):", "(2 matches in 1 file)"].join("\n"),
@@ -96,7 +96,7 @@ describe("search", () => {
     const many = path.join(base, "many");
     await mkdir(many);
     await writeFile(path.join(many, "a.txt"), "hit\n".repeat(MAX_COUNTED + 10));
-    const out = await search.run({ pattern: "hit" }, { root: many });
+    const out = await grep.run({ pattern: "hit" }, { root: many });
     expect(out.split("\n")).toHaveLength(MAX_SHOWN + 1);
     expect(out).toContain(`showing the first ${MAX_SHOWN} of more than ${MAX_COUNTED} matches in 1 file`);
   });

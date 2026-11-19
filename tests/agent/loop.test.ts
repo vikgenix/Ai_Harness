@@ -83,7 +83,7 @@ describe("runAgent", () => {
       role: "tool",
       results: [{ callId: "t1", name: "view_file", content: "1\tprint('hi')", isError: false }],
     });
-    expect(requests[0]!.tools!.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash", "finish"]);
+    expect(requests[0]!.tools!.map((t) => t.name)).toEqual(["view_file", "list_dir", "grep", "find_files", "edit_file", "create_file", "bash", "finish"]);
     expect(requests[1]!.tools).toEqual(requests[0]!.tools);
   });
 
@@ -194,7 +194,7 @@ describe("runAgent", () => {
   });
 
   it("tells the model when the provider rejects its tool call, and lets it retry", async () => {
-    const rejected = new ModelError("invalid_tool_call", "parameters for tool search did not match schema: missing properties: 'pattern'");
+    const rejected = new ModelError("invalid_tool_call", "parameters for tool grep did not match schema: missing properties: 'pattern'");
     const { model, requests } = scripted([{ error: rejected }, { toolCalls: [view("t1")] }, { error: rejected }, { content: "It prints hi." }]);
     const seen: string[] = [];
     const result = await runAgent(options(model, { events: { onRejectedToolCall: (d) => seen.push(d) } }));

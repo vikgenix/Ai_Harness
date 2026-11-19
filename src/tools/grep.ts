@@ -14,7 +14,7 @@ export const MAX_LINE_CHARS = 300;
 /** Larger files (data, bundles) are not searched. */
 export const MAX_FILE_BYTES = 1024 * 1024;
 
-interface SearchInput {
+interface GrepInput {
   pattern: string;
   path?: string;
   glob?: string;
@@ -30,11 +30,11 @@ interface FileMatches {
   hits: number[];
 }
 
-export const search: Tool<SearchInput> = {
+export const grep: Tool<GrepInput> = {
   spec: {
-    name: "search",
+    name: "grep",
     description:
-      "Search file contents in the repository for a regular expression (JavaScript syntax), like grep. " +
+      "Search file contents in the repository for a regular expression (JavaScript syntax), like grep. The argument is `pattern` (not a query). " +
       "Returns matching lines as path:line: text. Files ignored by git, binary files and files over 1 MB are skipped. " +
       `Shows at most ${MAX_SHOWN} matches; narrow with path or glob when there are more.`,
     inputSchema: {
@@ -81,7 +81,7 @@ export const search: Tool<SearchInput> = {
     let total = 0;
     let searched = 0;
     for (const file of files) {
-      if (ctx.signal?.aborted) throw new ToolError("search cancelled");
+      if (ctx.signal?.aborted) throw new ToolError("grep cancelled");
       const lines = await readTextLines(path.join(realRoot, file));
       if (!lines) continue;
       searched++;
@@ -116,7 +116,7 @@ export const search: Tool<SearchInput> = {
   },
 };
 
-function compile(input: SearchInput): RegExp {
+function compile(input: GrepInput): RegExp {
   const source = input.literal ? input.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : input.pattern;
   try {
     return new RegExp(source, input.case_insensitive ? "i" : "");
@@ -125,7 +125,7 @@ function compile(input: SearchInput): RegExp {
   }
 }
 
-function describe(input: SearchInput): string {
+function describe(input: GrepInput): string {
   return input.literal ? JSON.stringify(input.pattern) : `/${input.pattern}/${input.case_insensitive ? "i" : ""}`;
 }
 

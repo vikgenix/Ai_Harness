@@ -259,7 +259,7 @@ describe("interactive session", () => {
       expect(out).toContain("It prints hi.");
       expect(out).toMatch(/\[claude-opus-5-5 · 3 steps · /);
       expect(requests[0]!.system).toContain(dir.split(path.sep).pop()!);
-      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "search", "find_files", "edit_file", "create_file", "bash", "finish"]);
+      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "grep", "find_files", "edit_file", "create_file", "bash", "finish"]);
       expect(requests[1]!.messages[2]).toMatchObject({ role: "tool", results: [{ content: "1\tprint('hi')" }] });
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -25,7 +25,7 @@ export const bash: Tool<BashInput> = {
       "There is no input: use non-interactive flags (-y, --yes, --no-edit). " +
       `Times out after ${DEFAULT_TIMEOUT_S}s by default (max ${MAX_TIMEOUT_S}s); background processes are stopped when the command ends. ` +
       "Returns stdout and stderr together, then the exit code; long output keeps its start and end. " +
-      "Prefer view_file, search and find_files for reading code. sudo, git push and deleting outside the repository are refused.",
+      "Prefer view_file, grep and find_files for reading code. sudo, git push and deleting outside the repository are refused.",
     inputSchema: {
       type: "object",
       properties: {

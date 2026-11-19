@@ -99,10 +99,10 @@ describe("GeminiClient.chat", () => {
   });
 
   it("reports a malformed function call as a rejected tool call", async () => {
-    const chunk = { candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL", finishMessage: "Malformed function call: search(query=...)" }] };
+    const chunk = { candidates: [{ finishReason: "MALFORMED_FUNCTION_CALL", finishMessage: "Malformed function call: grep(query=...)" }] };
     await expect(new GeminiClient(base, fakeClient([chunk])).chat({ system: "", messages: [] })).rejects.toMatchObject({
       kind: "invalid_tool_call",
-      detail: "Malformed function call: search(query=...)",
+      detail: "Malformed function call: grep(query=...)",
     });
   });
 

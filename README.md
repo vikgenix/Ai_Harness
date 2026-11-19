@@ -175,7 +175,7 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 |---|---|
 | `view_file` | Reads a file with line numbers. Shows up to 400 lines unless given a range (max 1000), cuts very long lines, and skips binary files. |
 | `list_dir` | Shows a directory as a tree with file sizes, 2 levels deep by default (max 5). Lists `.git`, `node_modules`, caches and build output without opening them. Symlinks are shown, never followed. |
-| `search` | Searches file contents like grep: regex or plain text, optional glob (`*.py`, `src/**/*.{js,ts}`), case-insensitive, context lines. In a git repo, files ignored by `.gitignore` are skipped. Shows up to 100 matches. |
+| `grep` | Searches file contents: regex or plain text, optional glob (`*.py`, `src/**/*.{js,ts}`), case-insensitive, context lines. In a git repo, files ignored by `.gitignore` are skipped. Shows up to 100 matches. |
 | `find_files` | Finds files by name or path: a glob (`*.py`, `tests/**/test_*.ts`, `*.{js,ts}`) or plain text matched anywhere in the path, ignoring case (`config`). Skips files ignored by git. Shows up to 200 paths. |
 | `edit_file` | Changes an existing file by replacing exact text (`old_string` → `new_string`). The text must be unique unless `replace_all` is set; a miss explains why (different indentation, copied line numbers). Keeps CRLF line endings and file permissions, writes atomically, never touches `.git/`. Returns the edited lines with their new numbers. |
 | `create_file` | Creates a new file (and missing parent directories). Never overwrites: an existing file is an error pointing to `edit_file`. Files starting with `#!` are made executable. Max 1 MB, never inside `.git/`. |
@@ -217,7 +217,7 @@ src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
   view_file.ts        reads files with line numbers
   list_dir.ts         directory tree with sizes
-  search.ts           grep-style content search
+  grep.ts             content search (regex or plain text)
   find_files.ts       find files by glob or name
   edit_file.ts        exact find-and-replace edits
   create_file.ts      new files, never overwrites
@@ -242,7 +242,7 @@ tests/                offline tests (vitest)
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
-| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `search`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
+| 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `grep`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
 | 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ⬜ install dependencies in an isolated environment · ⬜ baseline test run · ⬜ optional Docker sandbox |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
