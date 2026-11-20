@@ -154,7 +154,7 @@ function showEdit(updated: string, offset: number, newText: string): string {
 
 /** Writes via a temporary file and rename, so an interrupted write never leaves a half-written file. */
 async function writeAtomically(file: string, content: string, mode: number): Promise<void> {
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.harness-${process.pid}.tmp`);
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.shrike-${process.pid}.tmp`);
   try {
     await writeFile(tmp, content, "utf8");
     await chmod(tmp, mode & 0o7777);

@@ -40,7 +40,7 @@ export const DEFAULT_IMAGE = "debian:bookworm-slim";
 const PYTHONS = ["3.12", "3.13", "3.11", "3.10", "3.9", "3.8"];
 
 /** Home inside the container: caches of pip, uv, npm, Go, Cargo, Maven and Gradle (mounted from the host, so they last). */
-const HOME = "/tmp/harness-home";
+const HOME = "/tmp/shrike-home";
 const PULL_TIMEOUT_MS = 15 * 60_000;
 const DOCKER_TIMEOUT_MS = 60_000;
 const PROCESS_LIMIT = 2048;
@@ -120,7 +120,7 @@ function track(name: string): void {
 
 /** Removes containers left by harness processes that are gone (killed before they could clean up). */
 async function removeLeftovers(): Promise<void> {
-  const r = await docker(["ps", "-a", "--filter", "label=ai-harness.pid", "--format", '{{.ID}} {{.Label "ai-harness.pid"}}']);
+  const r = await docker(["ps", "-a", "--filter", "label=shrike.pid", "--format", '{{.ID}} {{.Label "shrike.pid"}}']);
   const dead = r.stdout
     .split("\n")
     .map((l) => l.trim().split(" "))
@@ -177,7 +177,7 @@ export class DockerSandbox implements CommandSandbox {
     const home = path.join(opts.envsDir, "home");
     await mkdir(home, { recursive: true });
     const envsDir = realpathSync(opts.envsDir);
-    const name = `ai-harness-${path.basename(root).replace(/[^\w.-]+/g, "_").slice(0, 30)}-${randomBytes(4).toString("hex")}`;
+    const name = `shrike-${path.basename(root).replace(/[^\w.-]+/g, "_").slice(0, 30)}-${randomBytes(4).toString("hex")}`;
     const user = typeof process.getuid === "function" ? [`--user`, `${process.getuid()}:${process.getgid!()}`] : [];
     const env = {
       HOME,
@@ -196,7 +196,7 @@ export class DockerSandbox implements CommandSandbox {
         "--name",
         name,
         "--label",
-        `ai-harness.pid=${process.pid}`,
+        `shrike.pid=${process.pid}`,
         ...user,
         "--cap-drop",
         "ALL",
@@ -232,7 +232,7 @@ export class DockerSandbox implements CommandSandbox {
   }
 
   command(command: string, cwd: string, env: Record<string, string>, id: string): { file: string; args: string[] } {
-    const vars: Record<string, string> = { ...NON_INTERACTIVE_ENV, HARNESS_COMMAND_ID: id, ...env };
+    const vars: Record<string, string> = { ...NON_INTERACTIVE_ENV, SHRIKE_COMMAND_ID: id, ...env };
     if (env.PATH) vars.PATH = this.translatePath(env.PATH);
     return { file: "docker", args: ["exec", "--workdir", cwd, ...Object.entries(vars).flatMap(([k, v]) => ["--env", `${k}=${v}`]), this.name, this.shell, "-c", command] };
   }
@@ -249,7 +249,7 @@ export class DockerSandbox implements CommandSandbox {
 
   /** Kills every process of the command: they all carry its id in their environment. */
   async stop(id: string): Promise<void> {
-    const script = `for p in /proc/[0-9]*; do if tr '\\0' '\\n' < "$p/environ" 2>/dev/null | grep -qx 'HARNESS_COMMAND_ID=${id.replace(/[^\w-]/g, "")}'; then kill -9 "\${p#/proc/}" 2>/dev/null; fi; done; true`;
+    const script = `for p in /proc/[0-9]*; do if tr '\\0' '\\n' < "$p/environ" 2>/dev/null | grep -qx 'SHRIKE_COMMAND_ID=${id.replace(/[^\w-]/g, "")}'; then kill -9 "\${p#/proc/}" 2>/dev/null; fi; done; true`;
     await docker(["exec", this.name, "sh", "-c", script], { timeoutMs: 15_000 });
   }
 

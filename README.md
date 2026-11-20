@@ -1,8 +1,8 @@
-# AI Harness
+# Shrike
 
-A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
+A coding agent for the terminal, named after the small bird that hunts insects and pins its catch: Shrike finds bugs, pins each one down with a failing test, and fixes it. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–5 done. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–5 done. Shrike talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -10,10 +10,10 @@ A coding agent for the terminal. Give it a GitHub repository and an issue (or a 
 export AI_API_KEY="<your key>"   # Anthropic, OpenAI, Gemini, Groq or any OpenAI-compatible key
 make setup                       # installs dependencies (downloads Node.js locally if needed)
 make ping                        # optional: one tiny request to check the key and model
-make run                         # starts the interactive harness
+make run                         # starts Shrike interactively
 ```
 
-Inside the harness, type a request about the code in the working directory (by default the directory you started in), or use a command:
+Inside Shrike, type a request about the code in the working directory (by default the directory you started in), or use a command:
 
 ```
 /repo https://github.com/owner/project   # clone it and work in the clone
@@ -43,11 +43,11 @@ Inside the harness, type a request about the code in the working directory (by d
 
 Then:
 
-1. **Branch.** The working directory must be a git repository without uncommitted changes. The fix goes on a new branch, `harness/fix-123` (or `harness/<first-words-of-the-task>`), created from the default branch, so fixes never stack on each other or touch your branch.
+1. **Branch.** The working directory must be a git repository without uncommitted changes. The fix goes on a new branch, `shrike/fix-123` (or `shrike/<first-words-of-the-task>`), created from the default branch, so fixes never stack on each other or touch your branch.
 2. **Repository map and project setup.** The task message starts with a map of the repository (its source files with their classes, functions and methods and their line numbers, then the other files by path) and how the project is built and tested (see below).
 3. **Agent.** The agent gets a fix-specific system prompt and works alone through *understand → reproduce (failing test first) → fix at the root cause → verify with the tests → finish*. It is told never to run git commit/branch/checkout itself.
-4. **Self-review.** The first time the agent finishes with `completed`, the harness holds the finish back and shows it its whole diff, with problems found automatically and a checklist (see below). The agent fixes what it finds and finishes again.
-5. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
+4. **Self-review.** The first time the agent finishes with `completed`, Shrike holds the finish back and shows it its whole diff, with problems found automatically and a checklist (see below). The agent fixes what it finds and finishes again.
+5. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `Shrike <shrike@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
 
 After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
 
@@ -57,16 +57,16 @@ With `GITHUB_TOKEN` set, `/pr` publishes the fix branch that is checked out. It 
 
 ```
 Pull request to acme/demo (draft):
-  harness/fix-7 → main (1 commit)
+  shrike/fix-7 → main (1 commit)
   Title: Fix #7: Greeting is too quiet
   │ Made the greeting loud. Tests: tests/test_greet.py passed.
   │
   │ Fixes #7
   │
   │ ---
-  │ _Prepared by AI Harness, an AI coding agent. Please review it like any other contribution._
-Push harness/fix-7 and open this pull request? [y/N] y
-Pushed to me/demo:harness/fix-7 (your fork). Opened draft pull request #42: https://github.com/acme/demo/pull/42
+  │ _Prepared by Shrike, an AI coding agent. Please review it like any other contribution._
+Push shrike/fix-7 and open this pull request? [y/N] y
+Pushed to me/demo:shrike/fix-7 (your fork). Opened draft pull request #42: https://github.com/acme/demo/pull/42
 ```
 
 - **Where it goes:** the branch is pushed to the repository if the token may push there. Otherwise it goes to your fork, which is created if needed, and the pull request is opened from it. Maintainers may edit the branch.
@@ -94,7 +94,7 @@ Not posted.
 ```
 
 - **The same preparation as `/fix`:** the repository map (ranked by the focus words), project detection, dependency install, baseline tests and the sandbox if it is on. So the agent can run tests and one-off checks (`python -c ...`) to confirm a bug.
-- **What counts:** crashes, wrong results, data loss, security problems, leaks and broken edge cases, each backed by specific lines of code. Style, missing features and TODOs don't count. At most 5 drafts, each marked `confirmed` (it ran something that shows the bug) or `likely` (from reading the code). The harness sends back drafts that are too thin or name files that don't exist.
+- **What counts:** crashes, wrong results, data loss, security problems, leaks and broken edge cases, each backed by specific lines of code. Style, missing features and TODOs don't count. At most 5 drafts, each marked `confirmed` (it ran something that shows the bug) or `likely` (from reading the code). Shrike sends back drafts that are too thin or name files that don't exist.
 - **The repository is not changed:** the agent has no edit tools, and anything its commands change or create is put back afterwards. Your own uncommitted changes are left alone.
 - **Duplicates:** the open issues are listed for the agent to skip. Each draft is then compared with existing issues, open and closed (GitHub search, ranked by how alike the titles and texts are). Those that look alike are shown with a score, and ≥ 60% is flagged as a likely duplicate.
 - **Posting:** with `GITHUB_TOKEN` set, each draft is offered one at a time: `y` posts it, Enter or `n` skips it, `q` stops asking. A posted issue ends with a line saying an AI coding agent found it and a person reviewed it. Nothing is posted without a yes.
@@ -104,7 +104,7 @@ Without the UI, `make run REPO=owner/project AUDIT=1` (or `AUDIT="the date parse
 
 ### Project detection
 
-The harness reads the project files to tell the agent how the tests run, so it does not spend steps finding out:
+Shrike reads the project files to tell the agent how the tests run, so it does not spend steps finding out:
 
 ```
 Project: Python (uv) · tests: python3 -m pytest
@@ -146,7 +146,7 @@ The agent's `bash` commands run with the environment active (`VIRTUAL_ENV`, the 
 - **The repository stays clean.** Lockfiles the install rewrote are restored, and new files it made (`*.egg-info`, `node_modules/` without a `.gitignore`, ...) are added to `.git/info/exclude`, so they never end up in the fix commit.
 - **Fast the second time.** An install is skipped when the project files (`pyproject.toml`, lockfiles, `package.json`, ...) have not changed since the last successful one. Reopening the repository with `/repo` in a later session uses the environment again.
 - **Bounded.** Each install command stops after `install_timeout_s` (default 600). A failed install never stops the fix. Ctrl-C skips the rest of the install. Set `install_deps: false` in `config/model.yaml` to turn it off.
-- **Same trust as running the tests.** Installing runs the project's build code (`setup.py`, install scripts), as running its tests does; the harness's API keys and tokens are removed from its environment. For untrusted repositories, use the [Docker sandbox](#docker-sandbox).
+- **Same trust as running the tests.** Installing runs the project's build code (`setup.py`, install scripts), as running its tests does; Shrike's API keys and tokens are removed from its environment. For untrusted repositories, use the [Docker sandbox](#docker-sandbox).
 
 `make clean` removes `envs/`.
 
@@ -168,13 +168,13 @@ The agent gets the result in a `<baseline>` block:
   - tests/test_broken.py - ModuleNotFoundError: No module named 'not_a_real_module'
 ```
 
-- **Counts and failing tests** are read from the output of pytest, unittest (and Django), cargo, `go test`, jest, vitest, `node --test`, mocha, RSpec, PHPUnit, Maven, Gradle and `dotnet test`. For pytest, the harness adds `-rfE` (failing tests with their reason) and `--continue-on-collection-errors` (one broken test file does not stop the rest).
+- **Counts and failing tests** are read from the output of pytest, unittest (and Django), cargo, `go test`, jest, vitest, `node --test`, mocha, RSpec, PHPUnit, Maven, Gradle and `dotnet test`. For pytest, Shrike adds `-rfE` (failing tests with their reason) and `--continue-on-collection-errors` (one broken test file does not stop the rest).
 - **Could not run:** the agent gets the end of the output (a missing module, a wrong command) and is told to fix the setup or verify another way.
 - **Slow suites** are stopped after `baseline_timeout_s` (default 120). The agent is then told to run only the tests near its change, with the command for a single test.
 - **Cached** per commit, command and installed dependencies, so a second `/fix` of the same code takes no time.
 - **The repository stays clean:** files the tests change or leave behind are restored or added to `.git/info/exclude`, as for the install.
 
-The tests run with the installed dependencies, and without the harness's API keys. Ctrl-C skips the baseline. Set `baseline_tests: false` in `config/model.yaml` to turn it off.
+The tests run with the installed dependencies, and without Shrike's API keys. Ctrl-C skips the baseline. Set `baseline_tests: false` in `config/model.yaml` to turn it off.
 
 ### Docker sandbox
 
@@ -186,25 +186,25 @@ make run SANDBOX=docker REPO=owner/project TASK="..."   # one run
 ```
 
 ```
-Sandbox: Docker container ai-harness-pallets__click-196474b7 (python:3.12-slim-bookworm, network on).
+Sandbox: Docker container shrike-pallets__click-196474b7 (python:3.12-slim-bookworm, network on).
 Project: Python (uv) · tests: python3 -m pytest · not installed: uv
   Python: python3 -m venv "$VIRTUAL_ENV"; python -m pip install --quiet --disable-pip-version-check -e .; ...
   ✓ Python: installed in 8.0s
 ```
 
 - **What runs inside:** the agent's `bash` commands, the dependency install and the baseline tests. The file tools and git still run outside, on the same files.
-- **What it sees:** only the repository and its dependency environment, mounted at the same paths as outside, so paths in error messages match the files the agent edits. Your home directory, other projects and the harness's API keys are not there.
+- **What it sees:** only the repository and its dependency environment, mounted at the same paths as outside, so paths in error messages match the files the agent edits. Your home directory, other projects and Shrike's API keys are not there.
 - **Locked down:** it runs as your user (files it writes stay yours), with all Linux capabilities dropped, `no-new-privileges` and a process limit. Network access is on by default, since installs need it; `sandbox_network: false` turns it off.
 - **The image** is picked from the project: `python:3.12-slim-bookworm` (or the version `requires-python` asks for), `node:22-bookworm-slim`, `golang:<go.mod version>-bookworm`, `rust:1-slim-bookworm`, Maven, Gradle, Ruby, PHP (`composer:2`), .NET, else `debian:bookworm-slim`. Set `sandbox_image` to use your own (with the project's tools installed). An image is pulled on first use.
 - **Separate environments:** dependencies installed in the container go in `envs/docker/<image>/`, since a Linux virtualenv does not work outside it. Package caches (pip, npm, Go, Cargo, Maven, Gradle) are kept there too, so a second container installs quickly. The tool versions in the `<project>` block are the container's.
-- **Cleaned up:** one container per fix, or per repository in the interactive session. It is removed when the fix ends or the harness exits, and leftovers of a killed harness are removed on the next start. A timeout or Ctrl-C kills every process the command started in the container, background ones included.
+- **Cleaned up:** one container per fix, or per repository in the interactive session. It is removed when the fix ends or Shrike exits, and leftovers of a killed Shrike process are removed on the next start. A timeout or Ctrl-C kills every process the command started in the container, background ones included.
 - **Docker is required:** if it is not installed or not running, the run stops with exit code 2 before making a branch.
 
 Slim images lack some tools (git, `less`, compilers). The baseline shows the effect: tests that need them already fail there, so the agent does not blame itself for them.
 
 ### Self-review
 
-Agents often finish with a working fix plus things that should not be committed: a `print` left from debugging, a `repro.py` scratch script, a reformatted file, or no regression test. Before a fix is accepted, the agent sees its whole diff against the base branch (new files included, caches left out) and what the harness found automatically:
+Agents often finish with a working fix plus things that should not be committed: a `print` left from debugging, a `repro.py` scratch script, a reformatted file, or no regression test. Before a fix is accepted, the agent sees its whole diff against the base branch (new files included, caches left out) and what Shrike found automatically:
 
 | Check | Example |
 |---|---|
@@ -260,7 +260,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 | Command | What it does |
 |---|---|
 | `make setup` | Installs dependencies and builds. Needs only `make`, `bash`, `curl` and `git`. |
-| `make run` | Starts the harness (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. `SANDBOX=docker` runs the commands in a [Docker container](#docker-sandbox). |
+| `make run` | Starts Shrike (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. `SANDBOX=docker` runs the commands in a [Docker container](#docker-sandbox). |
 | `make ping` | Sends one tiny request to check that the key, model and endpoint work. |
 | `make test` | Runs the offline test suite (no API key, no network) and a secret scan. |
 | `make clean` | Removes build output, run logs, cloned repos, dependency environments and the local Node.js copy. |
@@ -300,7 +300,7 @@ export AI_PROVIDER=openai-compatible AI_BASE_URL=http://localhost:11434/v1 AI_MO
 - **Prompt caching** is on for every provider: explicit `cache_control` for Anthropic, a stable `prompt_cache_key` for OpenAI, and the automatic caches of Gemini and others. The usage line after each reply shows how many tokens came from the cache.
 - **Cost** is computed from the `pricing` table in the config (USD per 1M tokens). Models missing from the table still work; their cost shows as unknown.
 - **Refusal fallback** (Anthropic): if a safety filter declines a request, the API retries it on another Claude model. Set `refusal_fallback: false` to turn it off.
-- **Retries**: rate limits, overloads and network errors are retried by each provider's SDK, up to `limits.max_retries` times. Some hosts (Groq) check tool calls against the tool's schema and reject the whole reply when one does not match, and Gemini can return a malformed call. The harness then tells the model what was wrong and lets it try again, up to 3 times in a row.
+- **Retries**: rate limits, overloads and network errors are retried by each provider's SDK, up to `limits.max_retries` times. Some hosts (Groq) check tool calls against the tool's schema and reject the whole reply when one does not match, and Gemini can return a malformed call. Shrike then tells the model what was wrong and lets it try again, up to 3 times in a row.
 
 ## Tools
 
@@ -326,7 +326,7 @@ Safety and limits:
 
 ## Optional: GitHub access
 
-Set `GITHUB_TOKEN` to clone private repositories, to push fixes and open [pull requests](#pull-requests), and to post the issues [`/audit`](#audit) drafts (reading open issues and searching for duplicates works without it on public repositories, within GitHub's lower limits). The token is passed to git for each command only, never saved in the clone, and is removed from the environment of the agent's commands. Without it, the harness still clones, fixes and commits locally and saves the patch.
+Set `GITHUB_TOKEN` to clone private repositories, to push fixes and open [pull requests](#pull-requests), and to post the issues [`/audit`](#audit) drafts (reading open issues and searching for duplicates works without it on public repositories, within GitHub's lower limits). The token is passed to git for each command only, never saved in the clone, and is removed from the environment of the agent's commands. Without it, Shrike still clones, fixes and commits locally and saves the patch.
 
 ## Security
 

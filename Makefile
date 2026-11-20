@@ -1,8 +1,8 @@
-# AI Harness: standard evaluation interface.
+# Shrike: standard evaluation interface.
 #
 #   export AI_API_KEY="<key>"
 #   make setup      install everything (downloads Node.js locally if needed)
-#   make run        start the interactive harness (SANDBOX=docker: commands run in a container)
+#   make run        start Shrike interactively (SANDBOX=docker: commands run in a container)
 #   make test       run the offline test suite + secret scan
 #   make clean      remove generated files
 #
@@ -29,7 +29,7 @@ help:
 	@echo "First:   export AI_API_KEY=\"<your key>\""
 
 setup:
-	@echo "==> Setting up AI Harness"
+	@echo "==> Setting up Shrike"
 	@./scripts/ensure-node.sh
 	@if [ -f package-lock.json ]; then $(WITH_NODE) npm ci --no-audit --no-fund; else $(WITH_NODE) npm install --no-audit --no-fund; fi
 	@$(WITH_NODE) npm run --silent build

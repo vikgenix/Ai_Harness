@@ -87,20 +87,20 @@ describe("runHeadless", () => {
 
     expect(code).toBe(EXIT.committed);
     expect(out).toContain("Cloning local/demo...");
-    expect(out).toContain("Task: make the greeting louder\nWorking on branch harness/make-the-greeting-louder (from ");
+    expect(out).toContain("Task: make the greeting louder\nWorking on branch shrike/make-the-greeting-louder (from ");
     expect(out).toMatch(/\)\.\nRepo map: 2 files, 0 with symbols \(0 symbols\), ~\d+ tokens, [\d.]+s\.\n/);
     expect(out).toContain("  → create_file(path=src/greet.py, content=print('HELLO') )");
     expect(out).toContain("  ↻ Self-review: 1 file changed, 2 to check (Added print/log statement; No test file was added or changed).");
     expect(out).toContain("✓ Done: Added src/greet.py. Tests: none.");
     expect(out).toMatch(/\[claude-opus-5-5 · 3 steps · [\d.]+s · /);
-    expect(out).toMatch(/Committed [0-9a-f]+ on branch harness\/make-the-greeting-louder \(1 file: src\/greet\.py\)/);
+    expect(out).toMatch(/Committed [0-9a-f]+ on branch shrike\/make-the-greeting-louder \(1 file: src\/greet\.py\)/);
     expect(out).toContain("(result.json, transcript.json, fix.patch)");
 
     expect(path.basename(runDir!)).toMatch(/^\d{8}-\d{6}-make-the-greeting-louder$/);
     const record = JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8"));
     expect(record).toMatchObject({
       task: { kind: "text", text: "make the greeting louder" },
-      branch: "harness/make-the-greeting-louder",
+      branch: "shrike/make-the-greeting-louder",
       status: "finished",
       outcome: "completed",
       committed: true,
@@ -166,14 +166,14 @@ describe("runHeadless", () => {
 
     it("runs the agent's commands in the container and removes it afterwards", async () => {
       useFake();
-      const bash: ToolCall = { id: "b1", name: "bash", input: { command: "echo in-container:$HARNESS_COMMAND_ID" } };
+      const bash: ToolCall = { id: "b1", name: "bash", input: { command: "echo in-container:$SHRIKE_COMMAND_ID" } };
       const model = scripted([[bash], [finish("blocked", "Only looked.")]]);
       const { code, out, runDir } = await headless(model, { task: "look around", config: sandboxed });
       expect(code).toBe(EXIT.noFix);
-      expect(out).toMatch(/Sandbox: Docker container ai-harness-local__demo-[0-9a-f]{8} \(debian:bookworm-slim, network on\)\./);
+      expect(out).toMatch(/Sandbox: Docker container shrike-local__demo-[0-9a-f]{8} \(debian:bookworm-slim, network on\)\./);
       const calls = await fake.calls();
       const name = calls.find((c) => c[0] === "run")![calls.find((c) => c[0] === "run")!.indexOf("--name") + 1]!;
-      expect(calls.some((c) => c[0] === "exec" && c.at(-1) === "echo in-container:$HARNESS_COMMAND_ID")).toBe(true);
+      expect(calls.some((c) => c[0] === "exec" && c.at(-1) === "echo in-container:$SHRIKE_COMMAND_ID")).toBe(true);
       expect(calls.at(-1)).toEqual(["rm", "-f", name]);
       const record = JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8"));
       expect(record.sandbox).toEqual({ image: "debian:bookworm-slim", network: true });
@@ -189,7 +189,7 @@ describe("runHeadless", () => {
       expect(code).toBe(EXIT.setup);
       expect(out).toContain("Docker is not running (Cannot connect to the Docker daemon");
       expect(out).toContain("Start Docker, or run without the sandbox (sandbox: none in config/model.yaml).");
-      expect(execFileSync("git", ["branch", "--list", "harness/*"], { cwd: clone }).toString()).toBe("");
+      expect(execFileSync("git", ["branch", "--list", "shrike/*"], { cwd: clone }).toString()).toBe("");
     });
   });
 
@@ -231,10 +231,10 @@ describe("runHeadless", () => {
       const gh = await fakeGitHub(path.join(base, "gh-ok"));
       const { code, out, runDir } = await headless(fixing(), { repo: gh.clone, task: "add x", pr: true, githubToken: "ghp_x", fetchImpl: gh.fetchImpl, githubHosts: gh.hosts });
       expect(code).toBe(EXIT.committed);
-      expect(out).toContain("Pushing harness/add-x and opening a pull request to acme/demo...\nPushed to acme/demo:harness/add-x. Opened draft pull request #42");
-      expect(gh.branches("acme")).toContain("harness/add-x");
+      expect(out).toContain("Pushing shrike/add-x and opening a pull request to acme/demo...\nPushed to acme/demo:shrike/add-x. Opened draft pull request #42");
+      expect(gh.branches("acme")).toContain("shrike/add-x");
       const record = JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8"));
-      expect(record.pullRequest).toEqual({ url: "https://github.com/acme/demo/pull/42", number: 42, pushedTo: "acme/demo:harness/add-x", created: true, draft: true });
+      expect(record.pullRequest).toEqual({ url: "https://github.com/acme/demo/pull/42", number: 42, pushedTo: "acme/demo:shrike/add-x", created: true, draft: true });
     });
 
     it("exits 3 when the fix is committed but the pull request cannot be opened", async () => {

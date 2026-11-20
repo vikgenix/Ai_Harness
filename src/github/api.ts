@@ -26,7 +26,7 @@ export async function githubApi(opts: ApiOptions, method: string, path: string, 
       headers: {
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "ai-harness",
+        "User-Agent": "shrike",
         ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
         ...(body ? { "Content-Type": "application/json" } : {}),
       },

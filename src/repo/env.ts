@@ -262,7 +262,7 @@ export async function keepClean(root: string, before: Map<string, string>, madeB
     const file = path.resolve(root, await git(root, ["rev-parse", "--git-path", "info/exclude"]));
     await mkdir(path.dirname(file), { recursive: true });
     const lines = excluded.map((p) => `/${p.replace(/([\\*?[])/g, "\\$1")}`);
-    await appendFile(file, `\n# Made by ${madeBy} (AI Harness)\n${lines.join("\n")}\n`);
+    await appendFile(file, `\n# Made by ${madeBy} (Shrike)\n${lines.join("\n")}\n`);
   }
   return { restored, excluded };
 }

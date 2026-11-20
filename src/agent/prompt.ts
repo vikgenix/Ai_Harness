@@ -5,7 +5,7 @@
  */
 export function agentSystemPrompt(root: string): string {
   return [
-    "You are AI Harness, a coding agent working in a terminal on one repository.",
+    "You are Shrike, a coding agent working in a terminal on one repository.",
     `Repository root: ${root}`,
     "",
     "Use the tools to look at the code before answering questions about it; do not guess file contents.",
@@ -24,7 +24,7 @@ export function agentSystemPrompt(root: string): string {
  */
 export function fixSystemPrompt(root: string): string {
   return [
-    "You are AI Harness, a coding agent fixing one problem in a repository. You work on your own: nobody can answer questions until you finish.",
+    "You are Shrike, a coding agent fixing one problem in a repository. You work on your own: nobody can answer questions until you finish.",
     `Repository root: ${root}`,
     "",
     "Work in this order:",

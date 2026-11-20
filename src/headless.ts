@@ -190,7 +190,7 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
     }
   }
 
-  const runDir = path.join(opts.runsDir ?? DEFAULT_RUNS_DIR, `${timestamp(new Date(started))}-${fix.branch.replace(/^harness\//, "")}`);
+  const runDir = path.join(opts.runsDir ?? DEFAULT_RUNS_DIR, `${timestamp(new Date(started))}-${fix.branch.replace(/^[^/]+\//, "")}`);
   await mkdir(runDir, { recursive: true });
   const record = {
     repo: opts.repo,
@@ -342,7 +342,7 @@ async function audit(opts: HeadlessOptions, dir: string, held: { sandbox?: Docke
   print(`\n[${opts.model.model} · ${result.steps} ${result.steps === 1 ? "step" : "steps"} · ${((Date.now() - startedMs) / 1000).toFixed(1)}s · ${formatUsage(result.usage, cost)}]`);
 
   const runDir = await saveAudit(opts.runsDir ?? DEFAULT_RUNS_DIR, new Date(startedMs), outcome, [], { repo: opts.repo, dir, model: opts.model.model, focus });
-  print(`Saved to ${runDir} (result.json, issues.md, transcript.json).${drafts.length ? " Nothing was posted: review issues.md, then post the ones you want (or run /audit in the interactive harness, which asks about each)." : ""}`);
+  print(`Saved to ${runDir} (result.json, issues.md, transcript.json).${drafts.length ? " Nothing was posted: review issues.md, then post the ones you want (or run /audit in an interactive session, which asks about each)." : ""}`);
   return result.status === "finished" ? EXIT.committed : EXIT.noFix;
 }
 

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { defaultBranch, git } from "../agent/fix.js";
+import { defaultBranch, FIX_BRANCH_PREFIXES, git } from "../agent/fix.js";
 import { apiMessage, githubApi, type ApiResponse } from "./api.js";
 import { GitHubError, githubRepoOf } from "./issues.js";
 
@@ -17,12 +17,11 @@ import { GitHubError, githubRepoOf } from "./issues.js";
 
 const run = promisify(execFile);
 export const GITHUB_WEB = "https://github.com";
-const BRANCH_PREFIX = "harness/";
 const MAX_BRANCH_TRIES = 5;
 const FORK_POLL_TRIES = 20;
 const PUSH_TIMEOUT_MS = 5 * 60_000;
 /** Says who made the pull request, so reviewers know what they are looking at. */
-export const PR_FOOTER = "_Prepared by AI Harness, an AI coding agent. Please review it like any other contribution._";
+export const PR_FOOTER = "_Prepared by Shrike, an AI coding agent. Please review it like any other contribution._";
 
 export interface GitHubOptions {
   token: string;
@@ -69,8 +68,8 @@ export async function planPullRequest(dir: string, opts: { draft: boolean }): Pr
   const repo = await githubRepoOf(dir);
   if (!repo) throw new GitHubError("This clone did not come from GitHub (its origin remote is not a github.com URL), so there is nowhere to open a pull request.");
   const branch = await git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (!branch.startsWith(BRANCH_PREFIX)) {
-    throw new GitHubError(`The checked-out branch is '${branch}', not a fix branch (${BRANCH_PREFIX}...). Run /fix first, or check out its branch.`);
+  if (!FIX_BRANCH_PREFIXES.some((p) => branch.startsWith(p))) {
+    throw new GitHubError(`The checked-out branch is '${branch}', not a fix branch (${FIX_BRANCH_PREFIXES[0]}...). Run /fix first, or check out its branch.`);
   }
   const baseRef = await defaultBranch(dir);
   if (!baseRef) throw new GitHubError("Could not tell the repository's default branch (origin/HEAD is not set).");

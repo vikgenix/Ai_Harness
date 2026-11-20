@@ -72,7 +72,7 @@ export class OpenAICompatibleClient implements ModelClient {
       ...(effort && acceptsReasoningEffort(model) ? { reasoning_effort: toReasoningEffort(effort) } : {}),
       // OpenAI caches long prompt prefixes automatically; a stable key routes
       // our requests to the same cache.
-      ...(provider === "openai" ? { prompt_cache_key: "ai-harness" } : {}),
+      ...(provider === "openai" ? { prompt_cache_key: "shrike" } : {}),
     };
   }
 

@@ -14,7 +14,7 @@ export interface CliArgs {
   help: boolean;
 }
 
-export const USAGE = `AI Harness: a coding agent that fixes GitHub issues.
+export const USAGE = `Shrike: a coding agent that finds and fixes bugs in GitHub repositories.
 
 Usage:
   make run                                  interactive session

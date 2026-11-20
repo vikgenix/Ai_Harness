@@ -49,7 +49,7 @@ export async function fakeGitHub(dir: string, opts: FakeGitHubOptions = {}) {
   const clone = path.join(dir, "clone");
   execFileSync("git", ["clone", "-q", "--depth", "1", pathToFileURL(path.join(gh, "acme", "demo.git")).href, clone]);
   git(clone, "remote", "set-url", "origin", "https://github.com/acme/demo.git");
-  git(clone, "checkout", "-q", "-b", "harness/fix-7");
+  git(clone, "checkout", "-q", "-b", "shrike/fix-7");
   await writeFile(path.join(clone, "loud.py"), "print('HI')\n");
   git(clone, "add", ".");
   git(clone, "commit", "-qm", "Fix #7: Greeting is too quiet\n\nMade the greeting loud. Tests: none.\n\nFixes #7");

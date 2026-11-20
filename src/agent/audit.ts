@@ -107,7 +107,7 @@ export function createAuditTools(): ToolRegistry {
 /** System prompt for /audit. Like the others, only the root varies, so it caches. */
 export function auditSystemPrompt(root: string): string {
   return [
-    "You are AI Harness, auditing a repository for real bugs and drafting GitHub issues about them for its maintainers. You work on your own: nobody can answer questions until you finish.",
+    "You are Shrike, auditing a repository for real bugs and drafting GitHub issues about them for its maintainers. You work on your own: nobody can answer questions until you finish.",
     `Repository root: ${root}`,
     "",
     `Goal: up to ${MAX_DRAFTS} specific defects a maintainer would agree are bugs: crashes, wrong results, data loss, security problems (injection, path traversal, unsafe deserialization, leaked secrets), resource leaks, races, broken edge cases (empty input, None/null, unicode, very large values). Not style, naming, missing features, TODO comments, typing nits or "could be improved".`,

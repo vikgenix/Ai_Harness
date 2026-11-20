@@ -167,7 +167,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
 function rejectionNote(detail: string): string {
   return [
-    `[harness] Your last reply was rejected by the model API, so no tool ran: ${detail}`,
+    `[shrike] Your last reply was rejected by the model API, so no tool ran: ${detail}`,
     "Call each tool only with the parameters listed in its schema (names and types exactly as given), then continue.",
   ].join("\n");
 }

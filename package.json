@@ -1,14 +1,14 @@
 {
-  "name": "ai-harness",
+  "name": "shrike",
   "version": "0.1.0",
   "private": true,
-  "description": "A coding agent that clones a GitHub repo, fixes an issue, runs the tests and commits or opens a PR.",
+  "description": "Shrike: a coding agent that clones a GitHub repo, fixes an issue, runs the tests and commits or opens a PR.",
   "type": "module",
   "engines": {
     "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
   },
   "bin": {
-    "harness": "dist/index.js"
+    "shrike": "dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

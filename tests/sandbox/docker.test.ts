@@ -68,10 +68,10 @@ describe("DockerSandbox", () => {
       const run = (await fake.calls()).find((c) => c[0] === "run")!;
       const envs = path.join(base, "envs");
       expect(run).toEqual(expect.arrayContaining(["--detach", "--rm", "--init", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none"]));
-      expect(run).toEqual(expect.arrayContaining(["--volume", `${root}:${root}`, "--volume", `${envs}:${envs}`, "--volume", `${envs}/home:/tmp/harness-home`, "--workdir", root]));
-      expect(run).toEqual(expect.arrayContaining(["--user", `${process.getuid!()}:${process.getgid!()}`, "--label", `ai-harness.pid=${process.pid}`]));
+      expect(run).toEqual(expect.arrayContaining(["--volume", `${root}:${root}`, "--volume", `${envs}:${envs}`, "--volume", `${envs}/home:/tmp/shrike-home`, "--workdir", root]));
+      expect(run).toEqual(expect.arrayContaining(["--user", `${process.getuid!()}:${process.getgid!()}`, "--label", `shrike.pid=${process.pid}`]));
       expect(run.slice(-3)).toEqual(["sleep", "python:3.12-slim-bookworm", "31536000"]);
-      expect(sandbox.describe()).toMatch(/^Sandbox: Docker container ai-harness-repo-[0-9a-f]{8} \(python:3\.12-slim-bookworm, network off\)\.$/);
+      expect(sandbox.describe()).toMatch(/^Sandbox: Docker container shrike-repo-[0-9a-f]{8} \(python:3\.12-slim-bookworm, network off\)\.$/);
       expect(sandbox.notes()).toEqual([
         "Commands run in a Docker container (image python:3.12-slim-bookworm, network off), with the repository mounted at the same path: the file tools and bash see the same files. Nothing can be downloaded.",
         "git is not installed in the container; the harness handles git (branch, diff, commit) outside it.",
@@ -85,13 +85,13 @@ describe("DockerSandbox", () => {
   it("runs commands in the container, with the dependencies' environment and the container's PATH", async () => {
     const sandbox = await start();
     try {
-      const r = await runCommand('echo "$PWD|$VIRTUAL_ENV|$CI|${HARNESS_COMMAND_ID:+id}"; echo "$PATH"', root, 10_000, { sandbox, env: { VIRTUAL_ENV: "/envs/v", PATH: `/envs/v/bin${path.delimiter}${process.env.PATH}` } });
+      const r = await runCommand('echo "$PWD|$VIRTUAL_ENV|$CI|${SHRIKE_COMMAND_ID:+id}"; echo "$PATH"', root, 10_000, { sandbox, env: { VIRTUAL_ENV: "/envs/v", PATH: `/envs/v/bin${path.delimiter}${process.env.PATH}` } });
       expect(r.code).toBe(0);
       const [first, pathLine] = r.output.split("\n");
       expect(first).toBe(`${root}|/envs/v|1|id`);
       expect(pathLine).toBe("/envs/v/bin:/usr/local/bin:/usr/bin:/bin"); // this machine's PATH stays outside
       const exec = (await fake.calls()).filter((c) => c[0] === "exec").at(-1)!;
-      expect(exec.slice(-3)).toEqual(["bash", "-c", 'echo "$PWD|$VIRTUAL_ENV|$CI|${HARNESS_COMMAND_ID:+id}"; echo "$PATH"']);
+      expect(exec.slice(-3)).toEqual(["bash", "-c", 'echo "$PWD|$VIRTUAL_ENV|$CI|${SHRIKE_COMMAND_ID:+id}"; echo "$PATH"']);
     } finally {
       await sandbox.close();
     }
@@ -103,7 +103,7 @@ describe("DockerSandbox", () => {
       const r = await runCommand("sleep 30", root, 500, { sandbox });
       expect(r.timedOut).toBe(true);
       await new Promise((resolve) => setTimeout(resolve, 200));
-      const stops = (await fake.calls()).filter((c) => c[0] === "exec" && c.at(-1)!.includes("HARNESS_COMMAND_ID="));
+      const stops = (await fake.calls()).filter((c) => c[0] === "exec" && c.at(-1)!.includes("SHRIKE_COMMAND_ID="));
       expect(stops.length).toBeGreaterThan(0);
     } finally {
       await sandbox.close();

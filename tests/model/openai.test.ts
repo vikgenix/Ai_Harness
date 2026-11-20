@@ -51,7 +51,7 @@ describe("OpenAICompatibleClient request", () => {
       max_completion_tokens: 1000,
       temperature: 0,
       seed: 42,
-      prompt_cache_key: "ai-harness",
+      prompt_cache_key: "shrike",
       messages: [
         { role: "system", content: "be brief" },
         { role: "user", content: "hi" },

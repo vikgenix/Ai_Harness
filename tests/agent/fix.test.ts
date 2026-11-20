@@ -59,9 +59,9 @@ afterEach(async () => {
 
 describe("branchName and commitMessage", () => {
   it("names branches after the issue or the task's first words", () => {
-    expect(branchName(issueTask)).toBe("harness/fix-12");
-    expect(branchName(textTask)).toBe("harness/make-the-greeting-louder-please");
-    expect(branchName({ kind: "text", text: "!!!" })).toBe("harness/task");
+    expect(branchName(issueTask)).toBe("shrike/fix-12");
+    expect(branchName(textTask)).toBe("shrike/make-the-greeting-louder-please");
+    expect(branchName({ kind: "text", text: "!!!" })).toBe("shrike/task");
   });
 
   it("writes a subject, the summary, and a closing reference for issues", () => {
@@ -75,8 +75,8 @@ describe("startFix", () => {
   it("creates a branch for the task from the current commit", async () => {
     const head = git("rev-parse", "HEAD");
     const fix = await startFix(dir, issueTask);
-    expect(fix).toEqual({ branch: "harness/fix-12", base: head, baseName: git("rev-parse", "--abbrev-ref", "origin/HEAD").replace("origin/", "") });
-    expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("harness/fix-12");
+    expect(fix).toEqual({ branch: "shrike/fix-12", base: head, baseName: git("rev-parse", "--abbrev-ref", "origin/HEAD").replace("origin/", "") });
+    expect(git("rev-parse", "--abbrev-ref", "HEAD")).toBe("shrike/fix-12");
   });
 
   it("picks a new name when the branch exists, and starts from the default branch, not the previous fix", async () => {
@@ -86,7 +86,7 @@ describe("startFix", () => {
     git("-c", "user.name=t", "-c", "user.email=t@e", "commit", "-qm", "first fix");
 
     const second = await startFix(dir, issueTask);
-    expect(second.branch).toBe("harness/fix-12-2");
+    expect(second.branch).toBe("shrike/fix-12-2");
     expect(second.base).toBe(git("rev-parse", "origin/HEAD"));
     expect(git("ls-files")).not.toContain("first.txt");
   });
@@ -96,7 +96,7 @@ describe("startFix", () => {
     const err = await startFix(dir, issueTask).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(FixError);
     expect((err as Error).message).toContain("uncommitted changes:\n M README.md");
-    expect(git("rev-parse", "--abbrev-ref", "HEAD")).not.toContain("harness/");
+    expect(git("rev-parse", "--abbrev-ref", "HEAD")).not.toContain("shrike/");
   });
 
   it("refuses a directory that is not a git repository", async () => {
@@ -118,10 +118,10 @@ describe("completeFix", () => {
     const outcome = await completeFix(dir, fix, issueTask, completed());
     expect(outcome.committed).toBe(true);
     expect(outcome.files.sort()).toEqual(["src/app.py", "test_app.py"]);
-    expect(outcome.message).toMatch(/^Committed [0-9a-f]+ on branch harness\/fix-12 \(2 files: /);
+    expect(outcome.message).toMatch(/^Committed [0-9a-f]+ on branch shrike\/fix-12 \(2 files: /);
     expect(git("status", "--porcelain")).toBe("");
     expect(git("log", "-1", "--format=%B")).toBe(commitMessage(issueTask, completed().finished!.summary));
-    expect(git("log", "-1", "--format=%an <%ae>")).toBe("AI Harness <ai-harness@localhost>"); // no identity configured
+    expect(git("log", "-1", "--format=%an <%ae>")).toBe("Shrike <shrike@localhost>"); // no identity configured
     expect(git("rev-parse", "HEAD~1")).toBe(fix.base);
   });
 
@@ -154,7 +154,7 @@ describe("completeFix", () => {
     await writeFile(path.join(dir, "src/app.py"), "half done\n");
     const blocked = await completeFix(dir, fix, issueTask, result({ finished: { outcome: "blocked", summary: "no tests" } }));
     expect(blocked).toMatchObject({ committed: false, files: ["src/app.py"] });
-    expect(blocked.message).toMatch(/^Not committed: the agent reported it was blocked\. 1 file changed on branch harness\/fix-12/);
+    expect(blocked.message).toMatch(/^Not committed: the agent reported it was blocked\. 1 file changed on branch shrike\/fix-12/);
 
     const limited = await completeFix(dir, fix, issueTask, result({ status: "max_steps" }));
     expect(limited.message).toContain("the agent reached the step limit");

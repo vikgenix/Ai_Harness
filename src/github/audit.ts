@@ -40,7 +40,7 @@ export const SHOW_SCORE = 0.3;
 /** At or above this, a candidate is called a likely duplicate. */
 export const LIKELY_DUPLICATE = 0.6;
 /** Says how the issue came about, so maintainers can weigh it. */
-export const ISSUE_FOOTER = "_Found by AI Harness, an AI coding agent, and reviewed by a person before posting._";
+export const ISSUE_FOOTER = "_Found by Shrike, an AI coding agent, and reviewed by a person before posting._";
 
 const STOPWORDS = new Set(
   "the and for with when that this from into not are was were has have had but can cannot does doesn't don't its it's than then there their they them which while will would should could on in of to a an is be by or as at if no".split(" "),

@@ -6,8 +6,10 @@ import type { FixTask } from "./task.js";
 const run = promisify(execFile);
 
 /** Commits made where git has no user.name/user.email configured. */
-const FALLBACK_IDENTITY = ["-c", "user.name=AI Harness", "-c", "user.email=ai-harness@localhost"];
-const BRANCH_PREFIX = "harness/";
+const FALLBACK_IDENTITY = ["-c", "user.name=Shrike", "-c", "user.email=shrike@localhost"];
+const BRANCH_PREFIX = "shrike/";
+/** Prefixes of fix branches: the current one, and the one used before the rename. */
+export const FIX_BRANCH_PREFIXES = [BRANCH_PREFIX, "harness/"];
 /**
  * Caches that running tests or installing dependencies leaves behind. They are
  * never committed, even in a repository whose .gitignore misses them.
@@ -41,7 +43,7 @@ const succeeds = (dir: string, args: string[]) =>
     () => false,
   );
 
-/** Branch name for a task: harness/fix-123, or harness/<first words of the task>. */
+/** Branch name for a task: shrike/fix-123, or shrike/<first words of the task>. */
 export function branchName(task: FixTask): string {
   if (task.kind === "issue") return `${BRANCH_PREFIX}fix-${task.issue.ref.number}`;
   const slug = task.text
@@ -93,7 +95,7 @@ export async function startFix(dir: string, task: FixTask): Promise<FixBranch> {
 
   // Each fix starts from the default branch, not from the previous fix.
   let baseName = await git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (baseName.startsWith(BRANCH_PREFIX)) baseName = (await defaultBranch(dir)) ?? baseName;
+  if (FIX_BRANCH_PREFIXES.some((p) => baseName.startsWith(p))) baseName = (await defaultBranch(dir)) ?? baseName;
   const base = await git(dir, ["rev-parse", baseName === "HEAD" ? "HEAD" : `${baseName}^{commit}`]);
 
   const wanted = branchName(task);

@@ -1,4 +1,4 @@
-# AI Harness model configuration.
+# Shrike model configuration.
 #
 # The API key is NEVER stored here. It is read at runtime from the
 # AI_API_KEY environment variable.
@@ -66,7 +66,7 @@ sandbox_network: true
 
 # Pull requests (/pr, or make run ... PR=1; needs GITHUB_TOKEN): open them as
 # drafts, so maintainers see the fix was made by an agent and is not yet
-# asking for a merge. The PR body also says it was prepared by AI Harness.
+# asking for a merge. The PR body also says it was prepared by Shrike.
 pr_draft: true
 
 # Repeatability (spec section 10). Each setting is sent only to providers

@@ -134,7 +134,7 @@ describe("findProblems", () => {
 });
 
 describe("reviewMessage", () => {
-  const fixInfo: FixBranch = { branch: "harness/x", base: "abc", baseName: "main" };
+  const fixInfo: FixBranch = { branch: "shrike/x", base: "abc", baseName: "main" };
 
   it("shows the changes, the findings, a checklist and the diff", () => {
     const message = reviewMessage({ files: [{ path: "src/app.py", status: "M", added: 2, removed: 1, whitespaceOnly: false }], patch: "+x" }, ["Something to check"], fixInfo, 1);

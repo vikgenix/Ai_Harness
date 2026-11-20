@@ -71,14 +71,14 @@ describe("/pr", () => {
       expect(await session([`/repo ${gh.clone}`, "/pr", "/exit"], {})).toContain("Set GITHUB_TOKEN to push branches and open pull requests");
 
       const declined = await session([`/repo ${gh.clone}`, "/pr", "n", "/exit"], github);
-      expect(declined).toContain("Pull request to acme/demo (draft):\n  harness/fix-7 → ");
-      expect(declined).toContain("Push harness/fix-7 and open this pull request? [y/N] Not pushed.");
-      expect(gh.branches("acme")).not.toContain("harness/fix-7");
+      expect(declined).toContain("Pull request to acme/demo (draft):\n  shrike/fix-7 → ");
+      expect(declined).toContain("Push shrike/fix-7 and open this pull request? [y/N] Not pushed.");
+      expect(gh.branches("acme")).not.toContain("shrike/fix-7");
       expect(gh.calls).toEqual([]);
 
       const accepted = await session([`/repo ${gh.clone}`, "/pr", "y", "/exit"], github);
-      expect(accepted).toContain("Pushed to acme/demo:harness/fix-7. Opened draft pull request #42: https://github.com/acme/demo/pull/42");
-      expect(gh.branches("acme")).toContain("harness/fix-7");
+      expect(accepted).toContain("Pushed to acme/demo:shrike/fix-7. Opened draft pull request #42: https://github.com/acme/demo/pull/42");
+      expect(gh.branches("acme")).toContain("shrike/fix-7");
     } finally {
       process.env = saved;
       await rm(dir, { recursive: true, force: true });
@@ -258,24 +258,24 @@ describe("interactive session", () => {
       await startRepl({ config, model, tracker: new UsageTracker(config.pricing), input, output, fetchImpl });
 
       expect(fetched).toEqual(["https://api.github.com/repos/acme/widget/issues/7"]);
-      expect(out).toContain("Issue acme/widget#7: Crash on empty input (open, 0 comments)\nWorking on branch harness/fix-7 (from ");
+      expect(out).toContain("Issue acme/widget#7: Crash on empty input (open, 0 comments)\nWorking on branch shrike/fix-7 (from ");
       // The fix starts a fresh conversation with the fix prompt, not the chat's.
       expect(requests[1]!.system).toContain("fixing one problem");
       expect(requests[1]!.messages).toHaveLength(1);
       const first = requests[1]!.messages[0]!;
       expect(first.role === "user" && first.content).toContain("<issue>\n# Crash on empty input");
       // The repository map comes first in the task message.
-      expect(out).toMatch(/Working on branch harness\/fix-7 \(from \w+\)\.\nRepo map: 2 files, 0 with symbols.*\nProject: no known project files found\.\n/);
+      expect(out).toMatch(/Working on branch shrike\/fix-7 \(from \w+\)\.\nRepo map: 2 files, 0 with symbols.*\nProject: no known project files found\.\n/);
       expect(first.role === "user" && first.content).toContain("</repo_map>\nThe map above was generated");
       expect(first.role === "user" && first.content).toMatch(/<project>\nNo known project files[^]*<\/project>\n\nFix GitHub issue #7/);
       expect(first.role === "user" && first.content).toMatch(/^<repo_map>\n[^]*Files:\n {2}\.\/: README\.md\n {2}src\/: app\.py\n<\/repo_map>\n/);
       expect(out).toContain("  ↻ Self-review: 1 file changed, 1 to check (No test file was added or changed).");
       expect(out).toContain("✓ Done: Added src/fix.py.");
-      expect(out).toMatch(/Committed [0-9a-f]+ on branch harness\/fix-7 \(1 file: src\/fix\.py\)\./);
-      const log = execFileSync("git", ["log", "-1", "--format=%s", "harness/fix-7"], { cwd: dir }).toString().trim();
+      expect(out).toMatch(/Committed [0-9a-f]+ on branch shrike\/fix-7 \(1 file: src\/fix\.py\)\./);
+      const log = execFileSync("git", ["log", "-1", "--format=%s", "shrike/fix-7"], { cwd: dir }).toString().trim();
       expect(log).toBe("Fix #7: Crash on empty input");
 
-      expect(out).toContain("Task: make the greeting louder\nWorking on branch harness/make-the-greeting-louder (from harness/fix-7).");
+      expect(out).toContain("Task: make the greeting louder\nWorking on branch shrike/make-the-greeting-louder (from shrike/fix-7).");
       expect(out).toContain("Not committed: the agent stopped without calling finish. No files were changed.");
     } finally {
       await rm(dir, { recursive: true, force: true });

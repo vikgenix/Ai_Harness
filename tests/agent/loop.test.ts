@@ -204,7 +204,7 @@ describe("runAgent", () => {
     // First rejection: joined to the task message; later: its own user turn after the tool results.
     const first = requests[1]!.messages;
     expect(first).toHaveLength(1);
-    expect(first[0]!.role === "user" && first[0]!.content).toMatch(/^what does hello\.py print\?\n\n\[harness\] Your last reply was rejected by the model API, so no tool ran: .*missing properties: 'pattern'/);
+    expect(first[0]!.role === "user" && first[0]!.content).toMatch(/^what does hello\.py print\?\n\n\[shrike\] Your last reply was rejected by the model API, so no tool ran: .*missing properties: 'pattern'/);
     const later = requests[3]!.messages;
     expect(later.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user"]);
     expect(later[3]!.role === "user" && later[3]!.content).toContain("Call each tool only with the parameters listed in its schema");

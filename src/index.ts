@@ -40,7 +40,7 @@ async function main(): Promise<number> {
 
   const config = loadConfig({ configPath: args.config });
 
-  console.log("AI Harness");
+  console.log("Shrike");
   console.log(describeConfig(config));
 
   if (args.check) {

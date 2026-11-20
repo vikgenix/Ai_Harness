@@ -401,7 +401,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   if (opts.initialRepo) await openRepo(opts.initialRepo);
   else print(`Working directory: ${workdir}`);
 
-  rl.setPrompt("\nharness › ");
+  rl.setPrompt("\nshrike › ");
   prompt();
   try {
     for await (const raw of lines) {
