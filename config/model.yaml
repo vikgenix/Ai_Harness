@@ -92,7 +92,7 @@ limits:
 defaults:
   anthropic: claude-opus-5-5
   openai: gpt-5
-  gemini: gemini-2.5-pro
+  gemini: gemini-3.1-pro-preview
   groq: openai/gpt-oss-120b
 
 # USD per 1 million tokens, used for cost tracking and limits.max_cost_usd.
@@ -106,5 +106,6 @@ pricing:
   claude-haiku-5-5:  { input: 0.10, output: 0.50,  cache_read: 0.01, cache_write: 0.125 }
   # Not verified against current price lists. Check before relying on them.
   gpt-5:               { input: 1.25, output: 10.00, cache_read: 0.125 }
+  gemini-3.1-pro-preview: { input: 2.00, output: 12.00, cache_read: 0.20 }
   gemini-2.5-pro:      { input: 1.25, output: 10.00, cache_read: 0.31 }
   openai/gpt-oss-120b: { input: 0.15, output: 0.75 }

@@ -57,6 +57,9 @@ export class GeminiClient implements ModelClient {
         apiKey: settings.apiKey,
         httpOptions: {
           baseUrl: settings.baseUrl,
+          // The SDK defaults to v1, which lacks the preview models (gemini-3.x-preview)
+          // and some request fields; v1beta serves both stable and preview models.
+          apiVersion: "v1beta",
           timeout: settings.limits.requestTimeoutS * 1000,
           retryOptions: { attempts: settings.limits.maxRetries + 1 },
         },
