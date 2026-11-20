@@ -9,21 +9,26 @@ export function validateInput(schema: ToolInputSchema, input: unknown): string |
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return "input must be a JSON object";
   }
-  const obj = input as Record<string, unknown>;
+  return checkObject(schema, input as Record<string, unknown>, "");
+}
+
+function checkObject(schema: Pick<ToolInputSchema, "required" | "additionalProperties"> & { properties?: ToolInputSchema["properties"] }, obj: Record<string, unknown>, path: string): string | null {
+  const properties = schema.properties ?? {};
+  const at = (key: string) => (path ? `${path}.${key}` : key);
   for (const key of schema.required ?? []) {
-    if (obj[key] === undefined || obj[key] === null) return `missing required field '${key}'`;
+    if (obj[key] === undefined || obj[key] === null) return `missing required field '${at(key)}'`;
   }
   for (const [key, value] of Object.entries(obj)) {
-    const prop = schema.properties[key];
+    const prop = properties[key];
     if (!prop) {
       if (schema.additionalProperties === false) {
-        return `unknown field '${key}' (expected: ${Object.keys(schema.properties).join(", ")})`;
+        return `unknown field '${at(key)}' (expected: ${Object.keys(properties).join(", ")})`;
       }
       continue;
     }
     // Optional fields sent as null are treated as absent.
     if (value === null && !schema.required?.includes(key)) continue;
-    const err = checkValue(prop, value, key);
+    const err = checkValue(prop, value, at(key));
     if (err) return err;
   }
   return null;
@@ -40,6 +45,7 @@ function checkValue(prop: JsonSchemaProperty, value: unknown, path: string): str
       break;
     case "array":
       if (!Array.isArray(value)) return `'${path}' must be an array, got ${got}`;
+      if (prop.maxItems !== undefined && value.length > prop.maxItems) return `'${path}' has ${value.length} items; at most ${prop.maxItems} are allowed`;
       if (prop.items) {
         for (let i = 0; i < value.length; i++) {
           const err = checkValue(prop.items, value[i], `${path}[${i}]`);
@@ -49,6 +55,7 @@ function checkValue(prop: JsonSchemaProperty, value: unknown, path: string): str
       break;
     case "object":
       if (got !== "object") return `'${path}' must be an object, got ${got}`;
+      if (prop.properties) return checkObject(prop, value as Record<string, unknown>, path);
       break;
     default:
       if (typeof value !== prop.type) return `'${path}' must be a ${prop.type}, got ${got}`;

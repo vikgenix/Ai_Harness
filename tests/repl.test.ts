@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -79,6 +79,56 @@ describe("/pr", () => {
       const accepted = await session([`/repo ${gh.clone}`, "/pr", "y", "/exit"], github);
       expect(accepted).toContain("Pushed to acme/demo:harness/fix-7. Opened draft pull request #42: https://github.com/acme/demo/pull/42");
       expect(gh.branches("acme")).toContain("harness/fix-7");
+    } finally {
+      process.env = saved;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("/audit", () => {
+  it("drafts issues, shows duplicates, and posts only the ones the user approves", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-audit-"));
+    const saved = { ...process.env };
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    try {
+      const gh = await fakeGitHub(dir);
+      const { model, requests } = fakeModel(() => ({
+        message: { role: "assistant", content: "", toolCalls: [{
+  id: "a1",
+  name: "finish",
+  input: {
+    summary: "Looked at the greeting code.",
+    issues: [
+      { title: "parse_date() returns None for ISO dates ending in Z", body: "parse_date('2024-01-01T00:00:00Z') returns None.\n\n**Where**: loud.py:1\n\n**Expected**: a date. **Actual**: None.", severity: "medium", confidence: "confirmed", files: ["loud.py"] },
+      { title: "The greeting ignores the NAME environment variable", body: "Setting NAME has no effect on the greeting.\n\n**Where**: loud.py:1\n\n**Expected**: Hi NAME. **Actual**: HI.", severity: "low", confidence: "likely", files: ["loud.py"] },
+    ],
+  },
+}] },
+        usage: { inputTokens: 10, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        stopReason: "tool_use",
+        model: "claude-opus-5-5",
+        durationMs: 1,
+      }));
+      const input = new PassThrough();
+      const output = new PassThrough();
+      let out = "";
+      output.on("data", (d) => (out += d.toString()));
+      input.end([`/repo ${gh.clone}`, "/audit greetings", "y", "n", "/exit"].map((l) => `${l}\n`).join(""));
+      const runsDir = path.join(dir, "runs");
+      await startRepl({ config, model, tracker: new UsageTracker(config.pricing), input, output, githubToken: "ghp_x", fetchImpl: gh.fetchImpl, githubHosts: gh.hosts, runsDir });
+
+      expect(requests[0]!.system).toContain("auditing a repository for real bugs");
+      expect(requests[0]!.tools?.map((t) => t.name)).toEqual(["view_file", "list_dir", "grep", "find_files", "bash", "finish"]);
+      expect(out).toContain("Open issues on acme/demo: 1 (the agent is told to skip them).");
+      expect(out).toContain("\nLooked at the greeting code.\n");
+      expect(out).toMatch(/\[1\/2\] medium · confirmed · loud\.py\n[^]*Possible duplicates: #12 "parse_date crashes on ISO dates ending in Z" \(closed, \d+% alike: likely duplicate\)\nPost this issue to acme\/demo\? \[y\/N\/q\] Posted #99: https:\/\/github\.com\/acme\/demo\/issues\/99/);
+      expect(out).toMatch(/\[2\/2\] low · likely · loud\.py\n[^]*No similar existing issue found\.\nPost this issue to acme\/demo\? \[y\/N\/q\] Not posted\./);
+      const posts = gh.calls.filter((c) => c.method === "POST");
+      expect(posts.map((c) => c.body?.title)).toEqual(["parse_date() returns None for ISO dates ending in Z"]);
+      const [run] = await readdir(runsDir);
+      expect(out).toContain(`Drafts saved to ${path.join(runsDir, run!, "issues.md")}.`);
     } finally {
       process.env = saved;
       await rm(dir, { recursive: true, force: true });

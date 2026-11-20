@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { defaultBranch, git } from "../agent/fix.js";
-import { GITHUB_API, GitHubError, githubRepoOf } from "./issues.js";
+import { apiMessage, githubApi, type ApiResponse } from "./api.js";
+import { GitHubError, githubRepoOf } from "./issues.js";
 
 /**
  * Publishing a fix: push its branch and open a pull request.
@@ -115,36 +116,7 @@ export function describePlan(plan: PullRequestPlan): string {
 
 // --- GitHub API ------------------------------------------------------------------
 
-interface ApiResponse {
-  status: number;
-  data: Record<string, unknown> & { message?: string; errors?: { message?: string }[] };
-}
-
-async function api(opts: GitHubOptions, method: string, path: string, body?: unknown): Promise<ApiResponse> {
-  let res: Response;
-  try {
-    res = await (opts.fetchImpl ?? fetch)(`${opts.apiBase ?? GITHUB_API}${path}`, {
-      method,
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "ai-harness",
-        Authorization: `Bearer ${opts.token}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: opts.signal,
-    });
-  } catch (err) {
-    if (opts.signal?.aborted) throw new GitHubError("Cancelled.");
-    throw new GitHubError(`Could not reach GitHub: ${(err as Error).message}`);
-  }
-  const data = (await res.json().catch(() => ({}))) as ApiResponse["data"];
-  if (res.status === 401) throw new GitHubError("GitHub rejected GITHUB_TOKEN (401). Check that it is valid and not expired.");
-  return { status: res.status, data };
-}
-
-const apiMessage = (r: ApiResponse) => [r.data.message, ...(r.data.errors ?? []).map((e) => e.message)].filter(Boolean).join(": ");
+const api = (opts: GitHubOptions, method: string, path: string, body?: unknown) => githubApi(opts, method, path, body);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Where the token may push: the repository itself, or the user's fork (created if needed). */
@@ -246,8 +218,8 @@ export async function pushAndOpenPullRequest(dir: string, plan: PullRequestPlan,
   if (r.status === 201) return result(r, true, draft);
   if (r.status === 422 && /already exists/i.test(apiMessage(r))) {
     const found = await api(opts, "GET", `/repos/${owner}/${name}/pulls?state=open&head=${encodeURIComponent(`${target.owner}:${remoteBranch}`)}`);
-    const existing = Array.isArray(found.data) ? (found.data[0] as ApiResponse["data"] | undefined) : undefined;
-    if (existing) return result({ status: 200, data: existing }, false, draft);
+    const existing = found.list[0] as ApiResponse["data"] | undefined;
+    if (existing) return result({ ...found, data: existing }, false, draft);
   }
   if (r.status === 403 || r.status === 404) {
     throw new GitHubError(`The branch was pushed to ${target.owner}/${target.name}:${remoteBranch}, but GITHUB_TOKEN may not open pull requests on ${owner}/${name} (${r.status}: ${apiMessage(r)}).`);

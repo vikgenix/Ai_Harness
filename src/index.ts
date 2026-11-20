@@ -50,9 +50,9 @@ async function main(): Promise<number> {
 
   if (args.ping) return ping(config);
 
-  if (args.issue || args.task) {
+  if (args.issue || args.task || args.audit !== undefined) {
     if (!args.repo) {
-      console.error("--issue/--task needs --repo (or REPO=<url> with make run).");
+      console.error("--issue/--task/--audit needs --repo (or REPO=<url> with make run).");
       return 2;
     }
     console.log();
@@ -70,6 +70,7 @@ async function main(): Promise<number> {
       repo: args.repo,
       issue: args.issue,
       task: args.task,
+      audit: args.audit,
       pr: args.pr,
       githubToken: process.env.GITHUB_TOKEN || undefined,
       signal: abort.signal,

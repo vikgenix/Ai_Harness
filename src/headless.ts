@@ -2,25 +2,25 @@ import { statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
 import { completeFix, fixPatch, FixError, startFix, type FixOutcome } from "./agent/fix.js";
 import { createSelfReview } from "./agent/review.js";
-import { runAgent } from "./agent/loop.js";
+import { runAgent, type AgentEvents } from "./agent/loop.js";
+import { describeDraft, runAudit, saveAudit } from "./agent/audit.js";
 import { fixSystemPrompt } from "./agent/prompt.js";
 import { describeTask, resolveTask, taskPrompt, taskText, type FixTask } from "./agent/task.js";
 import type { HarnessConfig } from "./config.js";
-import { GitHubError } from "./github/issues.js";
+import { GitHubError, githubRepoOf } from "./github/issues.js";
 import { describePullRequest, planPullRequest, pushAndOpenPullRequest, type GitHubOptions } from "./github/pr.js";
 import { formatUsage, type UsageTracker } from "./model/cost.js";
 import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
 import { fixMessage, prepareWorkspace, type Workspace } from "./agent/workspace.js";
 import { dockerProblem, SandboxError, type DockerSandbox } from "./sandbox/docker.js";
+import { DEFAULT_RUNS_DIR, timestamp } from "./runs.js";
 import { createDefaultTools } from "./tools/index.js";
 import { describeCall } from "./ui/repl.js";
 
-/** Run records go here (git-ignored, removed by `make clean`). */
-export const DEFAULT_RUNS_DIR = fileURLToPath(new URL("../runs/", import.meta.url));
+export { DEFAULT_RUNS_DIR } from "./runs.js";
 
 /** Exit codes, so scripts and the eval can tell the cases apart. */
 export const EXIT = { committed: 0, noFix: 1, setup: 2, prFailed: 3 } as const;
@@ -31,9 +31,10 @@ export interface HeadlessOptions {
   tracker: UsageTracker;
   /** Repository URL or local directory. */
   repo: string;
-  /** Issue number/URL, or a described task (exactly one). */
+  /** Issue number/URL, a described task, or an audit with optional focus words (exactly one). */
   issue?: string;
   task?: string;
+  audit?: string;
   githubToken?: string;
   workspacesDir?: string;
   runsDir?: string;
@@ -64,8 +65,9 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
   const print = (s = "") => output.write(`${s}\n`);
   const started = Date.now();
 
-  if (Boolean(opts.issue) === Boolean(opts.task)) {
-    print("Give exactly one of ISSUE=<number|url> or TASK=\"<description>\".");
+  const asked = [opts.issue, opts.task].filter(Boolean).length + (opts.audit !== undefined ? 1 : 0);
+  if (asked !== 1) {
+    print('Give exactly one of ISSUE=<number|url>, TASK="<description>" or AUDIT=1 (or AUDIT="<focus>").');
     return EXIT.setup;
   }
 
@@ -100,6 +102,8 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
     }
   }
 
+  if (opts.audit !== undefined) return audit(opts, dir, held, print, started);
+
   // 2. Task and branch.
   let task: FixTask;
   let fix;
@@ -126,17 +130,7 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
   print();
 
   // 3. Agent. Model text is streamed; tool calls are shown one per line.
-  let atLineStart = true;
-  const write = (s: string) => {
-    if (!s) return;
-    output.write(s);
-    atLineStart = s.endsWith("\n");
-  };
-  const line = (s: string) => {
-    if (!atLineStart) output.write("\n");
-    print(s);
-    atLineStart = true;
-  };
+  const { events, line, endLine } = progress(output);
   const review = opts.config.selfReview ? createSelfReview(dir, fix) : undefined;
   const result = await runAgent({
     model: opts.model,
@@ -149,14 +143,7 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
     limits: opts.config.limits,
     task: fixMessage(taskPrompt(task), ws),
     signal: opts.signal,
-    events: {
-      onText: write,
-      onToolCall: (call) => line(`  → ${describeCall(call)}`),
-      onToolResult: (r) => {
-        if (r.isError) line(`    ✗ ${r.content.split("\n")[0]}`);
-      },
-      onRejectedToolCall: (detail) => line(`    ✗ tool call rejected by the API, retrying: ${detail}`),
-    },
+    events,
     beforeFinish: review
       ? async (input) => {
           const r = await review.check(input);
@@ -165,7 +152,7 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
         }
       : undefined,
   });
-  if (!atLineStart) output.write("\n");
+  endLine();
   if (result.finished) print(`\n${result.finished.outcome === "completed" ? "✓ Done" : "✗ Blocked"}: ${result.finished.summary}`);
   if (result.status === "error" && result.error) print(`Model error: ${result.error.message}`);
   const cost = result.costIncomplete ? undefined : result.costUsd;
@@ -272,16 +259,97 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
   return pullRequest && "error" in pullRequest ? EXIT.prFailed : EXIT.committed;
 }
 
+/** Streams the agent's text and shows each tool call on its own line. */
+function progress(output: Writable) {
+  let atLineStart = true;
+  const line = (s: string) => {
+    if (!atLineStart) output.write("\n");
+    output.write(`${s}\n`);
+    atLineStart = true;
+  };
+  const events: AgentEvents = {
+    onText: (s) => {
+      if (!s) return;
+      output.write(s);
+      atLineStart = s.endsWith("\n");
+    },
+    onToolCall: (call) => line(`  → ${describeCall(call)}`),
+    onToolResult: (r) => {
+      if (r.isError) line(`    ✗ ${r.content.split("\n")[0]}`);
+    },
+    onRejectedToolCall: (detail) => line(`    ✗ tool call rejected by the API, retrying: ${detail}`),
+  };
+  const endLine = () => {
+    if (!atLineStart) output.write("\n");
+    atLineStart = true;
+  };
+  return { events, line, endLine };
+}
+
+/**
+ * --audit without the UI: drafts issues and saves them in runs/; nothing is
+ * posted, since posting needs a person to say yes to each issue.
+ */
+async function audit(opts: HeadlessOptions, dir: string, held: { sandbox?: DockerSandbox }, print: (s?: string) => void, startedMs: number): Promise<number> {
+  const output = opts.output ?? process.stdout;
+  const focus = /^(1|true|yes)$/i.test(opts.audit ?? "") ? "" : (opts.audit ?? "").trim();
+  const github = (await githubRepoOf(dir)) ?? undefined;
+  print(`Auditing ${dir}${focus ? ` (focus: ${focus})` : ""}.`);
+  const { events, endLine } = progress(output);
+  let ws: Workspace | undefined;
+  let outcome;
+  try {
+    outcome = await runAudit(dir, {
+      focus,
+      github,
+      api: { token: opts.githubToken, fetchImpl: opts.fetchImpl, apiBase: opts.githubHosts?.apiBase, signal: opts.signal },
+      print,
+      prepare: async () => {
+        ws = await prepareWorkspace(dir, { config: opts.config, query: focus, envsDir: opts.envsDir, signal: opts.signal, print, step: (fn) => fn(opts.signal) });
+        held.sandbox = ws.sandbox;
+        print();
+        return ws;
+      },
+      agent: (system, message, tools) =>
+        runAgent({
+          model: opts.model,
+          tools,
+          system,
+          root: dir,
+          env: ws?.env,
+          sandbox: ws?.sandbox,
+          tracker: opts.tracker,
+          limits: opts.config.limits,
+          task: message,
+          signal: opts.signal,
+          events,
+        }),
+    });
+  } catch (err) {
+    if (!(err instanceof SandboxError)) throw err;
+    print(err.message);
+    return EXIT.setup;
+  }
+  endLine();
+  const { result, drafts } = outcome;
+  if (outcome.summary) print(`\n${outcome.summary}`);
+  if (result.status === "error" && result.error) print(`Model error: ${result.error.message}`);
+  if (result.status !== "finished") print(`The audit stopped before reporting (${result.status}).`);
+  else if (!drafts.length) print("No issues worth reporting were found.");
+  if (outcome.duplicateError) print(`Duplicate search incomplete: ${outcome.duplicateError}`);
+  drafts.forEach((d, i) => print(`\n${describeDraft(d, i, drafts.length, outcome.duplicates[i] ?? [])}`));
+  const cost = result.costIncomplete ? undefined : result.costUsd;
+  print(`\n[${opts.model.model} · ${result.steps} ${result.steps === 1 ? "step" : "steps"} · ${((Date.now() - startedMs) / 1000).toFixed(1)}s · ${formatUsage(result.usage, cost)}]`);
+
+  const runDir = await saveAudit(opts.runsDir ?? DEFAULT_RUNS_DIR, new Date(startedMs), outcome, [], { repo: opts.repo, dir, model: opts.model.model, focus });
+  print(`Saved to ${runDir} (result.json, issues.md, transcript.json).${drafts.length ? " Nothing was posted: review issues.md, then post the ones you want (or run /audit in the interactive harness, which asks about each)." : ""}`);
+  return result.status === "finished" ? EXIT.committed : EXIT.noFix;
+}
+
 function isDirectory(p: string): boolean {
   try {
     return statSync(p).isDirectory();
   } catch {
     return false;
   }
-}
-
-/** 20261118-143005, in local time: sorts by date and is safe in file names. */
-function timestamp(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }

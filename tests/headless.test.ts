@@ -193,6 +193,37 @@ describe("runHeadless", () => {
     });
   });
 
+  describe("with --audit", () => {
+    it("drafts issues and saves them, but posts nothing", async () => {
+      const gh = await fakeGitHub(path.join(base, "gh-audit"));
+      const model = scripted([[{
+  id: "a1",
+  name: "finish",
+  input: {
+    summary: "Looked at the greeting code.",
+    issues: [
+      { title: "parse_date() returns None for ISO dates ending in Z", body: "parse_date('2024-01-01T00:00:00Z') returns None.\n\n**Where**: loud.py:1\n\n**Expected**: a date. **Actual**: None.", severity: "medium", confidence: "confirmed", files: ["loud.py"] },
+      { title: "The greeting ignores the NAME environment variable", body: "Setting NAME has no effect on the greeting.\n\n**Where**: loud.py:1\n\n**Expected**: Hi NAME. **Actual**: HI.", severity: "low", confidence: "likely", files: ["loud.py"] },
+    ],
+  },
+} as ToolCall]]);
+      const { code, out, runDir } = await headless(model, { repo: gh.clone, audit: "1", githubToken: "ghp_x", fetchImpl: gh.fetchImpl, githubHosts: gh.hosts });
+      expect(code).toBe(EXIT.committed);
+      expect(out).toContain("Auditing ");
+      expect(out).toContain("[1/2] medium · confirmed · loud.py");
+      expect(out).toMatch(/Saved to .*-audit \(result\.json, issues\.md, transcript\.json\)\. Nothing was posted: review issues\.md/);
+      expect(gh.calls.filter((c) => c.method === "POST")).toEqual([]);
+      expect(path.basename(runDir!)).toMatch(/^\d{8}-\d{6}-audit$/);
+      expect(await readFile(path.join(runDir!, "issues.md"), "utf8")).toContain("## 2. The greeting ignores the NAME environment variable");
+    });
+
+    it("takes exactly one of an issue, a task or an audit", async () => {
+      const { code, out } = await headless(scripted([]), { task: "x", audit: "1" });
+      expect(code).toBe(EXIT.setup);
+      expect(out).toContain('Give exactly one of ISSUE=<number|url>, TASK="<description>" or AUDIT=1');
+    });
+  });
+
   describe("with --pr", () => {
     const fixing = () => scripted([[create("x.py", "x = 1\n")], [finish("completed", "Added x.py.")], [finish("completed", "Added x.py.")]]);
 

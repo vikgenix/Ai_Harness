@@ -6,6 +6,8 @@ export interface CliArgs {
   task?: string;
   /** After a committed fix, push it and open a pull request. */
   pr: boolean;
+  /** Audit for bugs and draft issues; the value is the focus ("1" for none). */
+  audit?: string;
   config?: string;
   check: boolean;
   ping: boolean;
@@ -19,12 +21,15 @@ Usage:
   make run REPO=<url> ISSUE=<number|url>    fix one issue, no UI
   make run REPO=<url> TASK="<description>"  fix a described bug, no UI
   make run REPO=<url> ISSUE=<n> PR=1        ... then push and open a pull request
+  make run REPO=<url> AUDIT=1               look for bugs and draft issues (saved, not posted)
+  make run REPO=<url> AUDIT="<focus>"       ... focusing on part of the code
 
 Options (when calling node dist/index.js directly):
   --repo <url>       GitHub repository to work on
   --issue <n|url>    issue number or URL to fix
   --task <text>      free-text description of what to fix
   --pr               after a committed fix, push it and open a pull request (needs GITHUB_TOKEN)
+  --audit <focus>    look for bugs and draft GitHub issues ("1" for no focus); never posts
   --config <path>    model config file (default: config/model.yaml)
   --check            validate configuration and exit (no API call)
   --ping             send one tiny request to check the key and model (make ping)
@@ -45,6 +50,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       issue: { type: "string" },
       task: { type: "string" },
       pr: { type: "boolean", default: false },
+      audit: { type: "string" },
       config: { type: "string" },
       check: { type: "boolean", default: false },
       ping: { type: "boolean", default: false },
@@ -56,6 +62,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     issue: values.issue || undefined,
     task: values.task || undefined,
     pr: values.pr ?? false,
+    audit: values.audit,
     config: values.config || undefined,
     check: values.check ?? false,
     ping: values.ping ?? false,

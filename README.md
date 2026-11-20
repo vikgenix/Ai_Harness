@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–4 done; Phase 5 in progress (pull requests done, `/audit` next). The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–5 done. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -23,6 +23,7 @@ Inside the harness, type a request about the code in the working directory (by d
 /fix owner/project#123        # or an issue URL
 /fix parser crashes on empty input   # a task in your own words
 /pr                           # push the fix branch and open a pull request (asks first)
+/audit [focus]                # look for bugs and draft GitHub issues (asks before posting each)
 /map [words]                  # show the repository map (files related to the words first)
 /project                      # show how the project is built and tested
 /cost                         # tokens and cost so far
@@ -75,6 +76,31 @@ Pushed to me/demo:harness/fix-7 (your fork). Opened draft pull request #42: http
 - **The token** goes to git for the push command only, as a header in the environment; it is never written to the clone's `.git/config`. It needs write access to contents and pull requests (classic tokens: `public_repo` or `repo`).
 
 Without the UI, `make run REPO=... ISSUE=... PR=1` (`--pr`) pushes and opens the pull request right after the commit, with no question: the flag is the yes.
+
+### Audit
+
+`/audit` turns the agent into a bug hunter: it looks for real defects and drafts GitHub issues about them. `/audit the date parser` focuses it on part of the code.
+
+```
+Open issues on acme/demo: 74 (the agent is told to skip them).
+...
+[1/2] medium · confirmed · src/dates.py
+  Title: parse_date() returns None for ISO dates ending in Z
+  │ parse_date('2024-01-01T00:00:00Z') returns None instead of a datetime.
+  │ **Where**: src/dates.py:12 ...
+  Possible duplicates: #12 "parse_date crashes on ISO dates ending in Z" (closed, 71% alike: likely duplicate)
+Post this issue to acme/demo? [y/N/q] n
+Not posted.
+```
+
+- **The same preparation as `/fix`:** the repository map (ranked by the focus words), project detection, dependency install, baseline tests and the sandbox if it is on. So the agent can run tests and one-off checks (`python -c ...`) to confirm a bug.
+- **What counts:** crashes, wrong results, data loss, security problems, leaks and broken edge cases, each backed by specific lines of code. Style, missing features and TODOs don't count. At most 5 drafts, each marked `confirmed` (it ran something that shows the bug) or `likely` (from reading the code). The harness sends back drafts that are too thin or name files that don't exist.
+- **The repository is not changed:** the agent has no edit tools, and anything its commands change or create is put back afterwards. Your own uncommitted changes are left alone.
+- **Duplicates:** the open issues are listed for the agent to skip. Each draft is then compared with existing issues, open and closed (GitHub search, ranked by how alike the titles and texts are). Those that look alike are shown with a score, and ≥ 60% is flagged as a likely duplicate.
+- **Posting:** with `GITHUB_TOKEN` set, each draft is offered one at a time: `y` posts it, Enter or `n` skips it, `q` stops asking. A posted issue ends with a line saying an AI coding agent found it and a person reviewed it. Nothing is posted without a yes.
+- **Saved:** every audit is saved in `runs/<date>-<time>-audit/`: `issues.md` (all drafts, ready to read or post by hand), `result.json` and `transcript.json`.
+
+Without the UI, `make run REPO=owner/project AUDIT=1` (or `AUDIT="the date parser"`) runs the audit and saves the drafts, but never posts: posting needs a person to say yes to each issue.
 
 ### Project detection
 
@@ -218,9 +244,10 @@ make run REPO=https://github.com/owner/project ISSUE=123
 make run REPO=owner/project TASK="parser crashes on empty input"
 make run REPO=../local/project TASK="..."
 make run REPO=owner/project ISSUE=123 PR=1   # then push and open a pull request
+make run REPO=owner/project AUDIT=1          # draft bug reports (saved, never posted)
 ```
 
-Runs the same fix workflow without the interactive session (clone, branch, agent, commit) and prints each step. The exit code tells scripts what happened: `0` a fix was committed, `1` no fix (the agent was blocked, hit a limit or changed nothing; its changes stay on the branch), `2` a setup problem (clone failed, issue not found, uncommitted changes), `3` the fix was committed but the pull request asked for with `PR=1` could not be opened (no `GITHUB_TOKEN`, no permission, ...). Ctrl-C stops the run cleanly; a second Ctrl-C quits at once.
+Runs the same fix workflow without the interactive session (clone, branch, agent, commit) and prints each step. The exit code tells scripts what happened: `0` a fix was committed, `1` no fix (the agent was blocked, hit a limit or changed nothing; its changes stay on the branch), `2` a setup problem (clone failed, issue not found, uncommitted changes), `3` the fix was committed but the pull request asked for with `PR=1` could not be opened (no `GITHUB_TOKEN`, no permission, ...). For `AUDIT=1`: `0` the audit finished (with or without drafts), `1` the agent stopped before reporting. Ctrl-C stops the run cleanly; a second Ctrl-C quits at once.
 
 Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `make clean`):
 
@@ -299,7 +326,7 @@ Safety and limits:
 
 ## Optional: GitHub access
 
-Set `GITHUB_TOKEN` to clone private repositories and to push fixes and open [pull requests](#pull-requests). The token is passed to git for each command only, never saved in the clone, and is removed from the environment of the agent's commands. Without it, the harness still clones, fixes and commits locally and saves the patch.
+Set `GITHUB_TOKEN` to clone private repositories, to push fixes and open [pull requests](#pull-requests), and to post the issues [`/audit`](#audit) drafts (reading open issues and searching for duplicates works without it on public repositories, within GitHub's lower limits). The token is passed to git for each command only, never saved in the clone, and is removed from the environment of the agent's commands. Without it, the harness still clones, fixes and commits locally and saves the patch.
 
 ## Security
 
@@ -326,6 +353,9 @@ src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
 src/github/pr.ts      pushes the fix branch (to a fork if needed) and opens the pull request
+src/github/audit.ts   open issues, duplicate search and similarity, posting an issue
+src/github/api.ts     the GitHub REST calls (no SDK)
+src/agent/audit.ts    /audit: prompt, its finish tool with the drafts, undoing changes, issues.md
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
   view_file.ts        reads files with line numbers
@@ -358,7 +388,7 @@ tests/                offline tests (vitest)
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `grep`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
 | 4 ✅ | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ✅ baseline test run · ✅ optional Docker sandbox |
-| 5 🚧 | ✅ push the fix (forking if needed) and open a pull request, with confirmation · ⬜ `/audit` with duplicate check and confirmation before posting |
+| 5 ✅ | ✅ push the fix (forking if needed) and open a pull request, with confirmation · ✅ `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |
 | 7 | `make eval` on SWE-bench Lite |
 | 8 | Hardening, docs, demo |

@@ -17,6 +17,11 @@ export interface JsonSchemaProperty {
   enum?: string[];
   minimum?: number;
   items?: JsonSchemaProperty;
+  maxItems?: number;
+  /** For objects: their fields, checked like a tool's input. */
+  properties?: Record<string, JsonSchemaProperty>;
+  required?: string[];
+  additionalProperties?: false;
 }
 
 export interface ToolInputSchema {

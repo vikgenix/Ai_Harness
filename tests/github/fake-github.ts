@@ -11,7 +11,18 @@ export interface FakeGitHubOptions {
   canPush?: boolean;
   /** Status and message for opening a pull request, instead of 201. */
   pullsReply?: { status: number; message: string }[];
+  /** Status for posting an issue, instead of 201. */
+  issueReply?: { status: number; message: string };
+  /** Status for the issue search, instead of 200. */
+  searchStatus?: number;
 }
+
+/** The issues acme/demo already has (#12 is closed, #20 is a pull request). */
+export const KNOWN_ISSUES = [
+  { number: 12, title: "parse_date crashes on ISO dates ending in Z", state: "closed", body: "Calling parse_date('2024-01-01T00:00:00Z') fails.", html_url: "https://github.com/acme/demo/issues/12" },
+  { number: 15, title: "Docs: typo in the README install section", state: "open", body: "", html_url: "https://github.com/acme/demo/issues/15" },
+  { number: 20, title: "Fix parse_date for Z suffix", state: "open", body: "", html_url: "https://github.com/acme/demo/pull/20", pull_request: {} },
+];
 
 export interface ApiCall {
   method: string;
@@ -67,6 +78,15 @@ export async function fakeGitHub(dir: string, opts: FakeGitHubOptions = {}) {
       return json(201, { number: 42, html_url: "https://github.com/acme/demo/pull/42", draft: body?.draft });
     }
     if (route === "GET /repos/acme/demo/pulls") return json(200, [{ number: 41, html_url: "https://github.com/acme/demo/pull/41", draft: false }]);
+    if (route === "GET /repos/acme/demo/issues") return json(200, KNOWN_ISSUES.filter((i) => i.state === "open"));
+    if (route === "GET /search/issues") {
+      if (opts.searchStatus) return json(opts.searchStatus, { message: "API rate limit exceeded" });
+      return json(200, { total_count: KNOWN_ISSUES.length, items: KNOWN_ISSUES });
+    }
+    if (route === "POST /repos/acme/demo/issues") {
+      if (opts.issueReply) return json(opts.issueReply.status, { message: opts.issueReply.message });
+      return json(201, { number: 99, html_url: "https://github.com/acme/demo/issues/99" });
+    }
     return json(404, { message: `no route for ${route}` });
   }) as typeof fetch;
 

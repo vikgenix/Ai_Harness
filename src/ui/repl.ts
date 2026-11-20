@@ -17,6 +17,9 @@ import { describeProject, projectBlock, projectFor } from "../repo/detect.js";
 import { existingEnvironment } from "../repo/env.js";
 import { describeRepoMap, repoMapFor } from "../repo/map.js";
 import { envsDirOf, fixMessage, openSandbox, prepareWorkspace } from "../agent/workspace.js";
+import { describeDraft, runAudit, saveAudit, type PostedIssue } from "../agent/audit.js";
+import { postIssue } from "../github/audit.js";
+import { DEFAULT_RUNS_DIR } from "../runs.js";
 import { SandboxError, type DockerSandbox } from "../sandbox/docker.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
@@ -24,6 +27,7 @@ const HELP = `Type a request about the code in the working directory, or a comma
   /repo <url|dir>    clone a repository (or open a local directory) to work in
   /fix <n|url|text>  fix an issue number, issue URL or described bug
   /pr                push the fix branch and open a pull request (asks first; needs GITHUB_TOKEN)
+  /audit [focus]     look for bugs and draft GitHub issues (each posted only if you say yes)
   /map [words]       show the repository map (files most related to the words first)
   /project           show how the project is built and tested (detected from its files)
   /cost              tokens and cost so far this session
@@ -51,6 +55,8 @@ export interface ReplOptions {
   fetchImpl?: typeof fetch;
   /** For tests: other GitHub API and git hosts. */
   githubHosts?: Pick<GitHubOptions, "apiBase" | "webBase" | "forkPollMs">;
+  /** Where audit records are saved (default: runs/ in the harness directory). */
+  runsDir?: string;
   tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
@@ -151,7 +157,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   }
 
   /** Runs the agent on `text` and shows its progress. `mode` replaces the chat's system prompt and history (used by /fix). */
-  async function send(text: string, mode: { system?: string; history?: Message[]; review?: SelfReview } = {}): Promise<AgentResult> {
+  async function send(text: string, mode: { system?: string; history?: Message[]; review?: SelfReview; tools?: ToolRegistry } = {}): Promise<AgentResult> {
     inFlight = new AbortController();
     const started = Date.now();
     // Tool lines must start on a fresh line even if streamed text didn't end with one.
@@ -171,7 +177,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try {
       const result = await runAgent({
         model,
-        tools,
+        tools: mode.tools ?? tools,
         system: mode.system ?? agentSystemPrompt(workdir),
         root: workdir,
         env: toolEnv,
@@ -203,8 +209,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
       if (!atLineStart) output.write("\n");
       if (result.finished) {
-        const label = result.finished.outcome === "completed" ? "✓ Done" : "✗ Blocked";
-        print(`\n${label}: ${result.finished.summary}`);
+        const { outcome, summary } = result.finished;
+        print(outcome ? `\n${outcome === "completed" ? "✓ Done" : "✗ Blocked"}: ${summary}` : `\n${summary}`); // an audit has no outcome
       }
       if (result.status === "error" && result.error) print(`Model error: ${result.error.message}`);
       if (result.status === "max_steps") print(`(stopped: reached limits.max_steps = ${config.limits.maxSteps})`);
@@ -331,6 +337,60 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   }
 
+  /** /audit: the agent looks for bugs and drafts issues; each draft is posted only after a yes. */
+  async function audit(focus: string): Promise<void> {
+    if (!(await ensureSandbox())) return;
+    const started = new Date();
+    const github = (await githubRepoOf(workdir)) ?? undefined;
+    const api = { token: opts.githubToken, fetchImpl: opts.fetchImpl, apiBase: opts.githubHosts?.apiBase };
+    print(`Auditing ${workdir}${focus ? ` (focus: ${focus})` : ""}.`);
+    const outcome = await runAudit(workdir, {
+      focus,
+      github,
+      api,
+      print,
+      prepare: () => prepareWorkspace(workdir, { config, query: focus, envsDir: opts.envsDir, print, step, sandbox }),
+      agent: (system, message, auditTools) => send(message, { system, history: [], tools: auditTools }),
+    });
+    if (outcome.workspace.env) toolEnv = outcome.workspace.env;
+
+    const { drafts } = outcome;
+    if (outcome.result.status === "finished" && !drafts.length) print("No issues worth reporting were found.");
+    if (outcome.duplicateError) print(`Duplicate search incomplete: ${outcome.duplicateError}`);
+    const canPost = Boolean(github && opts.githubToken);
+    let asking = canPost;
+    const posted: PostedIssue[] = [];
+    for (let i = 0; i < drafts.length; i++) {
+      print();
+      print(describeDraft(drafts[i]!, i, drafts.length, outcome.duplicates[i] ?? []));
+      if (!asking) continue;
+      // Others will see it: never without a yes, one issue at a time.
+      const answer = await ask(`Post this issue to ${github!.owner}/${github!.name}? [y/N/q] `);
+      if (/^q(uit)?$/i.test(answer)) {
+        asking = false;
+        print("Not posted. The remaining drafts are shown but not offered.");
+        continue;
+      }
+      if (!/^y(es)?$/i.test(answer)) {
+        print("Not posted.");
+        continue;
+      }
+      try {
+        const issue = await step((signal) => postIssue(github!, drafts[i]!, { ...api, token: opts.githubToken!, signal }));
+        posted.push({ draft: i, ...issue });
+        print(`Posted #${issue.number}: ${issue.url}`);
+      } catch (err) {
+        if (!(err instanceof GitHubError)) throw err;
+        print(`Not posted: ${err.message}`);
+      }
+    }
+    const runDir = await saveAudit(opts.runsDir ?? DEFAULT_RUNS_DIR, started, outcome, posted, { repo: repo ?? workdir, dir: workdir, model: model.model, focus });
+    if (drafts.length) {
+      const why = !github ? " This directory did not come from GitHub, so they cannot be posted from here." : !opts.githubToken ? " Set GITHUB_TOKEN to post them." : "";
+      print(`\nDrafts saved to ${path.join(runDir, "issues.md")}.${why}`);
+    }
+  }
+
   // Async iteration (not rl.question) so lines typed or piped in before the
   // prompt appears are queued instead of dropped. Started before the initial
   // clone, which can take a while. The loop ends on EOF / Ctrl-D.
@@ -396,6 +456,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         }
         case "/pr":
           await pullRequest();
+          break;
+        case "/audit":
+          await audit(arg);
           break;
         case "/fix":
           if (!repo) print("Open a repository first: /repo <url>");
