@@ -20,7 +20,7 @@ SHELL := /bin/bash
 # an exported PATH when they run a simple command directly.
 WITH_NODE := PATH="$(CURDIR)/.tools/node/bin:$$PATH"
 
-RUN_ARGS := $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(if $(TASK),--task "$(TASK)") $(if $(PR),--pr) $(if $(AUDIT),--audit "$(AUDIT)")
+RUN_ARGS := $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(if $(TASK),--task "$(TASK)") $(if $(PR),--pr) $(if $(PLAIN),--plain) $(if $(AUDIT),--audit "$(AUDIT)")
 
 .PHONY: help setup run ping test clean check-key check-secrets clean-env-test
 

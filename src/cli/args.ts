@@ -6,6 +6,8 @@ export interface CliArgs {
   task?: string;
   /** After a committed fix, push it and open a pull request. */
   pr: boolean;
+  /** Line-by-line session instead of the full-screen UI. */
+  plain: boolean;
   /** Audit for bugs and draft issues; the value is the focus ("1" for none). */
   audit?: string;
   config?: string;
@@ -28,6 +30,7 @@ Options (when calling node dist/index.js directly):
   --repo <url>       GitHub repository to work on
   --issue <n|url>    issue number or URL to fix
   --task <text>      free-text description of what to fix
+  --plain            interactive session as plain lines instead of the full-screen UI (make run PLAIN=1)
   --pr               after a committed fix, push it and open a pull request (needs GITHUB_TOKEN)
   --audit <focus>    look for bugs and draft GitHub issues ("1" for no focus); never posts
   --config <path>    model config file (default: config/model.yaml)
@@ -50,6 +53,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
       issue: { type: "string" },
       task: { type: "string" },
       pr: { type: "boolean", default: false },
+      plain: { type: "boolean", default: false },
       audit: { type: "string" },
       config: { type: "string" },
       check: { type: "boolean", default: false },
@@ -62,6 +66,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     issue: values.issue || undefined,
     task: values.task || undefined,
     pr: values.pr ?? false,
+    plain: values.plain ?? false,
     audit: values.audit,
     config: values.config || undefined,
     check: values.check ?? false,

@@ -2,7 +2,7 @@
 
 A coding agent for the terminal, named after the small bird that hunts insects and pins its catch: Shrike finds bugs, pins each one down with a failing test, and fixes it. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–5 done. Shrike talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–6 done. Shrike talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs in a full-screen terminal UI, as plain lines, or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -32,6 +32,39 @@ Inside Shrike, type a request about the code in the working directory (by defaul
 ```
 
 `make run REPO=https://github.com/owner/project` clones the repository at start.
+
+### Terminal UI
+
+In a terminal, `make run` opens a full-screen UI:
+
+```
+ ▲ shrike  acme__demo · shrike/fix-7                                              claude-opus-5-5
+┌─ Task ──────────────────────────┐┌─ Activity ──────────────────────────────────────────────────┐
+│FIX #7 Greeting is too quiet     ││I'll look at the greeting code first.                        │
+│                                 ││  ✓ grep(pattern=greet)                                  0.1s│
+│acme/demo · open · bug           ││  ✓ view_file(path=src/app.py)                           0.0s│
+├─ Progress ──────────────────────┤│  ⠧ bash(command=python -m pytest tests -x -q)           4.2s│
+│✓ Branch       shrike/fix-7      │├─ Diff · 1 file +1 -1 ───────────────────────────────────────┤
+│✓ Baseline     12 passed         ││▍ src/app.py                                                 │
+│⠧ Agent                          ││@@ -1,2 +1,2 @@                                              │
+├─ Files ─────────────────────────┤│-    return 'hi ' + name                                     │
+│M src/app.py              +1 -1  ││+    return 'HI ' + name                                     │
+└─────────────────────────────────┘└─────────────────────────────────────────────────────────────┘
+ ⠧ 12.4s  │  step 7/60  │  41.2k in · 3.1k out  │  $0.21 / $2.00  │  session $0.53
+shrike › _
+ Ctrl-C cancel · PgUp/PgDn activity · Ctrl-↑↓ diff
+```
+
+- **Task:** the issue or task being worked on.
+- **Progress:** each step of a fix or audit (branch, repo map, dependencies, baseline, agent, self-review, commit) with its result.
+- **Files:** the changed files with their line counts.
+- **Activity:** the agent's text and every tool call, with a spinner while it runs, then ✓ or ✗ and how long it took.
+- **Diff:** the colour diff of the changes so far, updated after each edit.
+- **Status bar:** steps, tokens, the cost of this run against its limit, and the session's total.
+
+Keys: Enter sends, Tab completes a command (matching commands are shown while you type `/`), ↑/↓ go through earlier lines, PgUp/PgDn scroll the activity (Esc goes back to the end), Ctrl-↑/↓ scroll the diff, and Ctrl-L redraws. Ctrl-C cancels the work in progress; when idle, it clears the line, and pressed twice it quits (as does Ctrl-D on an empty line). Questions such as "Push this branch? [y/N]" appear on the input line. Below 100×22 the left column folds into one line, and the UI needs at least 50×12.
+
+The UI is drawn without libraries: it uses the alternate screen (your scrollback is untouched) and redraws only the rows that change. It gives the terminal back as it found it when Shrike exits, also after an error. `make run PLAIN=1` (`--plain`) keeps the plain line-by-line session, which is also used when the input or output is not a terminal, or `TERM=dumb`.
 
 ### Cloning
 
@@ -260,7 +293,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 | Command | What it does |
 |---|---|
 | `make setup` | Installs dependencies and builds. Needs only `make`, `bash`, `curl` and `git`. |
-| `make run` | Starts Shrike (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. `SANDBOX=docker` runs the commands in a [Docker container](#docker-sandbox). |
+| `make run` | Starts Shrike in the [terminal UI](#terminal-ui) (`PLAIN=1` for plain lines), rebuilding first if the source changed. Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. `SANDBOX=docker` runs the commands in a [Docker container](#docker-sandbox). |
 | `make ping` | Sends one tiny request to check that the key, model and endpoint work. |
 | `make test` | Runs the offline test suite (no API key, no network) and a secret scan. |
 | `make clean` | Removes build output, run logs, cloned repos, dependency environments and the local Node.js copy. |
@@ -375,7 +408,9 @@ src/model/            provider-neutral model client
   gemini.ts           Gemini adapter
   errors.ts           one error type for all providers
   cost.ts             price table lookup and usage tracking
-src/ui/repl.ts        interactive session (replaced by the TUI in Phase 6)
+src/ui/repl.ts        interactive session: commands, chat, /fix, /audit, /pr (prints lines; reports to a view)
+src/ui/view.ts        what the session reports to the TUI: task, stages, tool calls, usage, questions
+src/ui/tui/           full-screen UI: layout (pure), keys and line editor, text measuring, the terminal driver
 scripts/              Node.js bootstrap, secret scan, clean-environment test
 tests/                offline tests (vitest)
 ```
@@ -389,6 +424,6 @@ tests/                offline tests (vitest)
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
 | 4 ✅ | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ✅ baseline test run · ✅ optional Docker sandbox |
 | 5 ✅ | ✅ push the fix (forking if needed) and open a pull request, with confirmation · ✅ `/audit` with duplicate check and confirmation before posting |
-| 6 | Full TUI |
+| 6 ✅ | Full-screen TUI: task, progress, files, live tool log, colour diff, status bar; Tab completion and history |
 | 7 | `make eval` on SWE-bench Lite |
 | 8 | Hardening, docs, demo |

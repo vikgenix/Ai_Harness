@@ -5,6 +5,7 @@ import { UsageTracker, formatUsage } from "./model/cost.js";
 import { ModelError, createModelClient } from "./model/index.js";
 import { runHeadless } from "./headless.js";
 import { startRepl } from "./ui/repl.js";
+import { startTui } from "./ui/tui/tui.js";
 
 /** Sends one tiny request to prove the key, model and endpoint work. */
 async function ping(config: HarnessConfig): Promise<number> {
@@ -77,14 +78,19 @@ async function main(): Promise<number> {
     });
   }
 
-  console.log();
-  await startRepl({
+  const session = {
     config,
     model: createModelClient(config),
     tracker: new UsageTracker(config.pricing),
     initialRepo: args.repo,
     githubToken: process.env.GITHUB_TOKEN || undefined,
-  });
+  };
+  // The full-screen UI needs a real terminal; pipes, TERM=dumb and --plain get the line mode.
+  if (!args.plain && process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== "dumb") await startTui(session);
+  else {
+    console.log();
+    await startRepl(session);
+  }
   return 0;
 }
 

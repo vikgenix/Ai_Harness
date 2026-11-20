@@ -22,6 +22,8 @@ import { postIssue } from "../github/audit.js";
 import { DEFAULT_RUNS_DIR } from "../runs.js";
 import { SandboxError, type DockerSandbox } from "../sandbox/docker.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
+import type { Workspace } from "../agent/workspace.js";
+import type { SessionView } from "./view.js";
 
 const HELP = `Type a request about the code in the working directory, or a command:
   /repo <url|dir>    clone a repository (or open a local directory) to work in
@@ -60,6 +62,8 @@ export interface ReplOptions {
   tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
+  /** A screen that shows the session in panels (the TUI); without one, everything is printed as lines. */
+  view?: SessionView;
 }
 
 function isDirectory(p: string): boolean {
@@ -86,12 +90,33 @@ const STATUS_NOTES: Partial<Record<AgentResult["status"], string>> = {
   cancelled: "(cancelled)",
 };
 
+/** Stages of a fix or an audit, from what the workspace preparation found. */
+function reportWorkspace(view: SessionView | undefined, ws: Workspace): void {
+  if (!view) return;
+  const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  view.stage("Repo map", ws.map ? "done" : "skipped", ws.map ? `${count(ws.map.files, "file")}, ${count(ws.map.symbols, "symbol")}` : "off");
+  view.stage("Project", ws.project?.ecosystems.length ? "done" : "skipped", ws.project?.ecosystems.map((e) => e.name).join(", ") || "none detected");
+  if (ws.sandbox) view.stage("Sandbox", "done", ws.sandbox.image);
+  if (ws.setup) {
+    const failed = ws.setup.results.filter((r) => r.status === "failed").length;
+    const fresh = ws.setup.results.filter((r) => r.status === "installed").length;
+    view.stage("Dependencies", failed ? "failed" : "done", failed ? `${failed} failed` : fresh ? "installed" : "up to date");
+  } else view.stage("Dependencies", "skipped");
+  if (ws.baseline) {
+    const runs = ws.baseline.runs;
+    const broken = runs.find((r) => r.status === "error" || r.status === "timed_out");
+    const failing = runs.reduce((n, r) => n + (r.counts ? r.counts.failed + r.counts.errors : 0), 0);
+    const passed = runs.reduce((n, r) => n + (r.counts?.passed ?? 0), 0);
+    view.stage("Baseline", broken ? "failed" : "done", broken ? (broken.status === "timed_out" ? "too slow" : "could not run") : failing ? `${failing} already failing` : `${passed} passed`);
+  } else view.stage("Baseline", "skipped");
+}
+
 /**
- * Interactive session. Replaced by the full TUI in Phase 6; the /fix
- * workflow arrives in Phase 3.
+ * The interactive session: chat, /fix, /audit, /pr and the other commands.
+ * It prints as lines, or, given a view, also reports to the full-screen TUI.
  */
 export async function startRepl(opts: ReplOptions): Promise<void> {
-  const { config, model, tracker } = opts;
+  const { config, model, tracker, view } = opts;
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
   const tty = Boolean(output.isTTY);
@@ -118,10 +143,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   };
 
   // Ctrl-C: cancel the reply in progress, or quit when idle.
-  rl.on("SIGINT", () => {
+  const interrupt = () => {
     if (inFlight) inFlight.abort();
     else rl.close();
-  });
+  };
+  rl.on("SIGINT", interrupt);
+  view?.onInterrupt(interrupt);
+  const showContext = (extra: { branch?: string; base?: string } = {}) => view?.context({ workdir, ...extra, sandbox: sandbox?.image });
 
   /** Runs one slow step that Ctrl-C can cancel without leaving the session. */
   async function step<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T> {
@@ -139,6 +167,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try {
       sandbox = await step((signal) => openSandbox(workdir, config, { envsDir: opts.envsDir, signal, print }));
       toolEnv = existingEnvironment(workdir, envsDirOf(sandbox, opts.envsDir));
+      showContext();
       return true;
     } catch (err) {
       if (!(err instanceof SandboxError)) throw err;
@@ -154,6 +183,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     workdir = dir;
     toolEnv = config.sandbox === "docker" ? undefined : existingEnvironment(workdir, opts.envsDir);
     history = []; // earlier tool results refer to the old directory
+    showContext();
   }
 
   /** Runs the agent on `text` and shows its progress. `mode` replaces the chat's system prompt and history (used by /fix). */
@@ -174,6 +204,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     };
 
     output.write("\n");
+    view?.busy(true);
+    let steps = 0;
+    let runCost: number | undefined = 0;
     try {
       const result = await runAgent({
         model,
@@ -189,16 +222,40 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         signal: inFlight.signal,
         events: {
           onText: write,
-          onToolCall: (call) => line(dim(`  → ${describeCall(call)}`)),
-          onToolResult: (r) => {
-            if (r.isError) line(dim(`    ✗ ${r.content.split("\n")[0]}`));
+          onToolCall: (call) => {
+            if (view) {
+              if (!atLineStart) write("\n");
+              view.toolStarted(call);
+            } else line(dim(`  → ${describeCall(call)}`));
+          },
+          onToolResult: (r, ms) => {
+            if (view) view.toolFinished(r, ms);
+            else if (r.isError) line(dim(`    ✗ ${r.content.split("\n")[0]}`));
           },
           onRejectedToolCall: (detail) => line(dim(`    ✗ tool call rejected by the API, retrying: ${detail}`)),
+          onResponse: (_res, cost) => {
+            steps++;
+            runCost = cost === undefined || runCost === undefined ? undefined : runCost + cost;
+            const u = tracker.usage;
+            view?.usage({
+              steps,
+              maxSteps: config.limits.maxSteps,
+              runCostUsd: runCost,
+              maxCostUsd: config.limits.maxCostUsd,
+              inputTokens: u.inputTokens,
+              outputTokens: u.outputTokens,
+              cacheReadTokens: u.cacheReadTokens,
+              sessionCostUsd: tracker.pricedCostUsd,
+            });
+          },
         },
         beforeFinish: mode.review
           ? async (input) => {
               const r = await mode.review!.check(input);
-              if (r) line(dim(`  ↻ ${r.note}`));
+              if (r) {
+                line(dim(`  ↻ ${r.note}`));
+                view?.stage("Self-review", "running", `round ${mode.review!.rounds}`);
+              }
               return r?.message;
             }
           : undefined,
@@ -225,6 +282,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return result;
     } finally {
       inFlight = undefined;
+      view?.busy(false);
     }
   }
 
@@ -271,38 +329,66 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       inFlight = undefined;
     }
     print(describeTask(task));
-
-    if (!(await ensureSandbox())) return; // before the branch, so a missing Docker changes nothing
-
-    let branch;
+    view?.task({
+      kind: "fix",
+      title: task.kind === "issue" ? `#${task.issue.ref.number} ${task.issue.title}` : task.text.split("\n")[0]!,
+      detail:
+        task.kind === "issue"
+          ? `${task.issue.ref.owner}/${task.issue.ref.name} · ${task.issue.state}${task.issue.labels.length ? ` · ${task.issue.labels.join(", ")}` : ""}\n\n${task.issue.body}`
+          : task.text.includes("\n")
+            ? task.text
+            : undefined, // a one-line task is the title already
+    });
+    view?.busy(true);
     try {
-      branch = await startFix(workdir, task);
-    } catch (err) {
-      if (!(err instanceof FixError)) throw err;
-      print(err.message);
-      return;
-    }
-    print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
-    // Ctrl-C during the install or the baseline skips that step; the fix goes on without it.
-    const ws = await prepareWorkspace(workdir, { config, query: taskText(task), envsDir: opts.envsDir, print, step, sandbox });
-    if (ws.env) toolEnv = ws.env;
+      if (!(await ensureSandbox())) return; // before the branch, so a missing Docker changes nothing
 
-    // A fix is its own conversation; afterwards the chat continues from it.
-    const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
-    const result = await send(fixMessage(taskPrompt(task), ws), { system: fixSystemPrompt(workdir), history: [], review });
-    try {
-      const outcome = await completeFix(workdir, branch, task, result);
-      print(outcome.message);
-      if (outcome.committed && (await githubRepoOf(workdir))) print("To push it and open a pull request: /pr");
-    } catch (err) {
-      if (!(err instanceof FixError)) throw err;
-      print(`Could not commit the fix: ${err.message}`);
+      let branch;
+      try {
+        branch = await startFix(workdir, task);
+      } catch (err) {
+        if (!(err instanceof FixError)) throw err;
+        print(err.message);
+        view?.stage("Branch", "failed", "the working tree is not clean");
+        return;
+      }
+      print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
+      view?.stage("Branch", "done", branch.branch);
+      showContext({ branch: branch.branch, base: branch.base });
+      // Ctrl-C during the install or the baseline skips that step; the fix goes on without it.
+      view?.stage("Prepare", "running");
+      const prepStarted = Date.now();
+      const ws = await prepareWorkspace(workdir, { config, query: taskText(task), envsDir: opts.envsDir, print, step, sandbox });
+      view?.stage("Prepare", "done", `${((Date.now() - prepStarted) / 1000).toFixed(1)}s`);
+      reportWorkspace(view, ws);
+      if (ws.env) toolEnv = ws.env;
+
+      // A fix is its own conversation; afterwards the chat continues from it.
+      const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
+      view?.stage("Agent", "running");
+      const result = await send(fixMessage(taskPrompt(task), ws), { system: fixSystemPrompt(workdir), history: [], review });
+      const completed = result.finished?.outcome === "completed";
+      view?.stage("Agent", completed ? "done" : "failed", completed ? `${result.steps} steps` : result.finished ? "blocked" : result.status.replace("_", " "));
+      if (review?.rounds) view?.stage("Self-review", "done", `${review.rounds} ${review.rounds === 1 ? "round" : "rounds"}, ${review.findings.length} found`);
+      try {
+        const outcome = await completeFix(workdir, branch, task, result);
+        print(outcome.message);
+        view?.stage("Commit", outcome.committed ? "done" : "skipped", outcome.committed ? outcome.commit : "not committed");
+        if (outcome.committed && (await githubRepoOf(workdir))) print("To push it and open a pull request: /pr");
+      } catch (err) {
+        if (!(err instanceof FixError)) throw err;
+        print(`Could not commit the fix: ${err.message}`);
+        view?.stage("Commit", "failed", err.message);
+      }
+    } finally {
+      view?.busy(false);
     }
   }
 
   /** Asks a question and waits for the next line typed (empty at the end of input). */
   async function ask(question: string): Promise<string> {
-    output.write(question);
+    if (view) view.question(question.trim());
+    else output.write(question);
     const next = await lines.next();
     return next.done ? "" : next.value.trim();
   }
@@ -344,15 +430,32 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const github = (await githubRepoOf(workdir)) ?? undefined;
     const api = { token: opts.githubToken, fetchImpl: opts.fetchImpl, apiBase: opts.githubHosts?.apiBase };
     print(`Auditing ${workdir}${focus ? ` (focus: ${focus})` : ""}.`);
-    const outcome = await runAudit(workdir, {
-      focus,
-      github,
-      api,
-      print,
-      prepare: () => prepareWorkspace(workdir, { config, query: focus, envsDir: opts.envsDir, print, step, sandbox }),
-      agent: (system, message, auditTools) => send(message, { system, history: [], tools: auditTools }),
-    });
+    view?.task({ kind: "audit", title: focus ? `Audit: ${focus}` : "Audit", detail: github ? `${github.owner}/${github.name}` : workdir });
+    view?.busy(true);
+    let outcome;
+    try {
+      outcome = await runAudit(workdir, {
+        focus,
+        github,
+        api,
+        print,
+        prepare: async () => {
+          view?.stage("Prepare", "running");
+          const prepStarted = Date.now();
+          const ws = await prepareWorkspace(workdir, { config, query: focus, envsDir: opts.envsDir, print, step, sandbox });
+          view?.stage("Prepare", "done", `${((Date.now() - prepStarted) / 1000).toFixed(1)}s`);
+          reportWorkspace(view, ws);
+          view?.stage("Agent", "running");
+          return ws;
+        },
+        agent: (system, message, auditTools) => send(message, { system, history: [], tools: auditTools }),
+      });
+    } finally {
+      view?.busy(false);
+    }
     if (outcome.workspace.env) toolEnv = outcome.workspace.env;
+    view?.stage("Agent", outcome.result.status === "finished" ? "done" : "failed", outcome.result.status === "finished" ? `${outcome.drafts.length} drafts` : outcome.result.status.replace("_", " "));
+    if (github) view?.stage("Duplicates", outcome.duplicateError ? "failed" : "done", outcome.duplicateError ? "search incomplete" : `${outcome.duplicates.filter((d) => d.length).length} with similar issues`);
 
     const { drafts } = outcome;
     if (outcome.result.status === "finished" && !drafts.length) print("No issues worth reporting were found.");
@@ -379,6 +482,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         const issue = await step((signal) => postIssue(github!, drafts[i]!, { ...api, token: opts.githubToken!, signal }));
         posted.push({ draft: i, ...issue });
         print(`Posted #${issue.number}: ${issue.url}`);
+        view?.stage(`Posted #${issue.number}`, "done", drafts[i]!.title);
       } catch (err) {
         if (!(err instanceof GitHubError)) throw err;
         print(`Not posted: ${err.message}`);
@@ -398,10 +502,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
 
   print(HELP);
   print();
+  showContext();
   if (opts.initialRepo) await openRepo(opts.initialRepo);
   else print(`Working directory: ${workdir}`);
 
-  rl.setPrompt("\nshrike › ");
+  rl.setPrompt(view ? "" : "\nshrike › "); // the TUI draws its own input line
   prompt();
   try {
     for await (const raw of lines) {
@@ -412,6 +517,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       if (!line.startsWith("/")) {
+        view?.task({ kind: "chat", title: "Chat", detail: line });
         if (await ensureSandbox()) await send(line);
         prompt();
         continue;
