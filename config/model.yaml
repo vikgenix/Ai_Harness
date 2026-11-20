@@ -64,6 +64,11 @@ sandbox: none
 sandbox_image: null
 sandbox_network: true
 
+# Pull requests (/pr, or make run ... PR=1; needs GITHUB_TOKEN): open them as
+# drafts, so maintainers see the fix was made by an agent and is not yet
+# asking for a merge. The PR body also says it was prepared by AI Harness.
+pr_draft: true
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0

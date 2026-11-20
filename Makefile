@@ -8,6 +8,7 @@
 #
 # Run without the UI:  make run REPO=<github url> ISSUE=<number|url>
 #                      make run REPO=<github url> TASK="<description>"
+#                      add PR=1 to push the fix and open a pull request (needs GITHUB_TOKEN)
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -18,7 +19,7 @@ SHELL := /bin/bash
 # an exported PATH when they run a simple command directly.
 WITH_NODE := PATH="$(CURDIR)/.tools/node/bin:$$PATH"
 
-RUN_ARGS := $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(if $(TASK),--task "$(TASK)")
+RUN_ARGS := $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(if $(TASK),--task "$(TASK)") $(if $(PR),--pr)
 
 .PHONY: help setup run ping test clean check-key check-secrets clean-env-test
 

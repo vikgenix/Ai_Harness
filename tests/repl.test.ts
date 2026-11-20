@@ -9,6 +9,7 @@ import { UsageTracker } from "../src/model/cost.js";
 import { ModelError, type ChatRequest, type ChatResponse, type ModelClient, type ToolCall } from "../src/model/index.js";
 import { startRepl } from "../src/ui/repl.js";
 import { makeSourceRepo } from "./helpers.js";
+import { fakeGitHub } from "./github/fake-github.js";
 
 const config = loadConfig({ env: { AI_API_KEY: "sk-ant-fake" } });
 
@@ -46,6 +47,44 @@ async function run(lines: string[], model: ModelClient, tracker = new UsageTrack
   await startRepl({ config, model, tracker, input, output, workdir });
   return { out, tracker };
 }
+
+describe("/pr", () => {
+  const session = async (lines: string[], extra: Partial<Parameters<typeof startRepl>[0]>) => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let out = "";
+    output.on("data", (d) => (out += d.toString()));
+    input.end(lines.map((l) => `${l}\n`).join(""));
+    await startRepl({ config, model: fakeModel().model, tracker: new UsageTracker(config.pricing), input, output, ...extra });
+    return out;
+  };
+
+  it("shows the pull request, asks, and pushes only after a yes", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "harness-repl-pr-"));
+    const saved = { ...process.env };
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    try {
+      const gh = await fakeGitHub(dir);
+      const github = { githubToken: "ghp_x", fetchImpl: gh.fetchImpl, githubHosts: gh.hosts };
+
+      expect(await session([`/repo ${gh.clone}`, "/pr", "/exit"], {})).toContain("Set GITHUB_TOKEN to push branches and open pull requests");
+
+      const declined = await session([`/repo ${gh.clone}`, "/pr", "n", "/exit"], github);
+      expect(declined).toContain("Pull request to acme/demo (draft):\n  harness/fix-7 → ");
+      expect(declined).toContain("Push harness/fix-7 and open this pull request? [y/N] Not pushed.");
+      expect(gh.branches("acme")).not.toContain("harness/fix-7");
+      expect(gh.calls).toEqual([]);
+
+      const accepted = await session([`/repo ${gh.clone}`, "/pr", "y", "/exit"], github);
+      expect(accepted).toContain("Pushed to acme/demo:harness/fix-7. Opened draft pull request #42: https://github.com/acme/demo/pull/42");
+      expect(gh.branches("acme")).toContain("harness/fix-7");
+    } finally {
+      process.env = saved;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("interactive session", () => {
   it("sends chat messages with the full conversation and shows usage", async () => {

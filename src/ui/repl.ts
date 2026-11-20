@@ -8,7 +8,8 @@ import { createSelfReview, type SelfReview } from "../agent/review.js";
 import { agentSystemPrompt, fixSystemPrompt } from "../agent/prompt.js";
 import { describeTask, resolveTask, taskPrompt, taskText } from "../agent/task.js";
 import { describeConfig, type HarnessConfig } from "../config.js";
-import { GitHubError } from "../github/issues.js";
+import { GitHubError, githubRepoOf } from "../github/issues.js";
+import { describePlan, describePullRequest, planPullRequest, pushAndOpenPullRequest, type GitHubOptions } from "../github/pr.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
@@ -22,6 +23,7 @@ import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 const HELP = `Type a request about the code in the working directory, or a command:
   /repo <url|dir>    clone a repository (or open a local directory) to work in
   /fix <n|url|text>  fix an issue number, issue URL or described bug
+  /pr                push the fix branch and open a pull request (asks first; needs GITHUB_TOKEN)
   /map [words]       show the repository map (files most related to the words first)
   /project           show how the project is built and tested (detected from its files)
   /cost              tokens and cost so far this session
@@ -47,6 +49,8 @@ export interface ReplOptions {
   githubToken?: string;
   /** For tests: replaces the GitHub API's fetch. */
   fetchImpl?: typeof fetch;
+  /** For tests: other GitHub API and git hosts. */
+  githubHosts?: Pick<GitHubOptions, "apiBase" | "webBase" | "forkPollMs">;
   tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
@@ -281,10 +285,49 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
     const result = await send(fixMessage(taskPrompt(task), ws), { system: fixSystemPrompt(workdir), history: [], review });
     try {
-      print((await completeFix(workdir, branch, task, result)).message);
+      const outcome = await completeFix(workdir, branch, task, result);
+      print(outcome.message);
+      if (outcome.committed && (await githubRepoOf(workdir))) print("To push it and open a pull request: /pr");
     } catch (err) {
       if (!(err instanceof FixError)) throw err;
       print(`Could not commit the fix: ${err.message}`);
+    }
+  }
+
+  /** Asks a question and waits for the next line typed (empty at the end of input). */
+  async function ask(question: string): Promise<string> {
+    output.write(question);
+    const next = await lines.next();
+    return next.done ? "" : next.value.trim();
+  }
+
+  /** /pr: shows the pull request for the checked-out fix branch, and pushes and opens it if the user agrees. */
+  async function pullRequest(): Promise<void> {
+    if (!opts.githubToken) {
+      print('Set GITHUB_TOKEN to push branches and open pull requests: export GITHUB_TOKEN="<token>" (it needs write access to contents and pull requests).');
+      return;
+    }
+    let plan;
+    try {
+      plan = await planPullRequest(workdir, { draft: config.prDraft });
+    } catch (err) {
+      if (!(err instanceof GitHubError)) throw err;
+      print(err.message);
+      return;
+    }
+    print(describePlan(plan));
+    // Others will see it: never without a yes.
+    if (!/^y(es)?$/i.test(await ask(`Push ${plan.branch} and open this pull request? [y/N] `))) {
+      print("Not pushed.");
+      return;
+    }
+    const token = opts.githubToken;
+    try {
+      const pr = await step((signal) => pushAndOpenPullRequest(workdir, plan, { token, signal, fetchImpl: opts.fetchImpl, ...opts.githubHosts }));
+      print(describePullRequest(pr));
+    } catch (err) {
+      if (!(err instanceof GitHubError)) throw err;
+      print(err.message);
     }
   }
 
@@ -351,6 +394,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           print(project ? `${projectBlock(project).replace(/^<project>\n|\n<\/project>$/g, "")}\n\n${describeProject(project)}` : "Could not read the project files.");
           break;
         }
+        case "/pr":
+          await pullRequest();
+          break;
         case "/fix":
           if (!repo) print("Open a repository first: /repo <url>");
           else if (!arg) print("Usage: /fix <issue number | issue url | description>");

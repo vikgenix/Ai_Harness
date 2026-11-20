@@ -50,6 +50,8 @@ export interface HarnessConfig {
   sandboxImage: string | undefined;
   /** Whether the container can reach the network (installs need it). */
   sandboxNetwork: boolean;
+  /** Open pull requests as drafts. */
+  prDraft: boolean;
   /** undefined when the provider does not accept the setting. */
   temperature: number | undefined;
   seed: number | undefined;
@@ -157,6 +159,8 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
   }
   const sandboxNetwork = file.sandbox_network ?? true;
   if (typeof sandboxNetwork !== "boolean") throw new ConfigError("'sandbox_network' must be true or false.");
+  const prDraft = file.pr_draft ?? true;
+  if (typeof prDraft !== "boolean") throw new ConfigError("'pr_draft' must be true or false.");
 
   return {
     provider,
@@ -176,6 +180,7 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     sandbox: sandbox as Sandbox,
     sandboxImage: optionalString(file, "sandbox_image"),
     sandboxNetwork,
+    prDraft,
     temperature: SUPPORTS_TEMPERATURE[provider] ? temperature : undefined,
     seed: SUPPORTS_SEED[provider] ? seed : undefined,
     limits: {

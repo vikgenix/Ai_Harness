@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–4 done. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–4 done; Phase 5 in progress (pull requests done, `/audit` next). The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -22,6 +22,7 @@ Inside the harness, type a request about the code in the working directory (by d
 /fix 123                      # fix issue #123 of the cloned GitHub repository
 /fix owner/project#123        # or an issue URL
 /fix parser crashes on empty input   # a task in your own words
+/pr                           # push the fix branch and open a pull request (asks first)
 /map [words]                  # show the repository map (files related to the words first)
 /project                      # show how the project is built and tested
 /cost                         # tokens and cost so far
@@ -48,6 +49,32 @@ Then:
 5. **Commit.** If the agent finishes with `completed`, all changes are committed on the branch: the subject is `Fix #123: <issue title>`, the body is the agent's summary (what changed, which tests ran), ending with `Fixes #123`. Caches left by running tests (`__pycache__`, `node_modules`, `.pytest_cache`, ...) are never committed. Your git identity is used if configured, otherwise `AI Harness <ai-harness@localhost>`. If the agent is blocked or hits a limit, the changes stay uncommitted on the branch for you to inspect, and the reason is shown.
 
 After a fix, the chat continues from it, so you can ask follow-up questions or for more changes.
+
+### Pull requests
+
+With `GITHUB_TOKEN` set, `/pr` publishes the fix branch that is checked out. It works on a fix from an earlier session too. It shows the pull request first and pushes nothing without a yes:
+
+```
+Pull request to acme/demo (draft):
+  harness/fix-7 → main (1 commit)
+  Title: Fix #7: Greeting is too quiet
+  │ Made the greeting loud. Tests: tests/test_greet.py passed.
+  │
+  │ Fixes #7
+  │
+  │ ---
+  │ _Prepared by AI Harness, an AI coding agent. Please review it like any other contribution._
+Push harness/fix-7 and open this pull request? [y/N] y
+Pushed to me/demo:harness/fix-7 (your fork). Opened draft pull request #42: https://github.com/acme/demo/pull/42
+```
+
+- **Where it goes:** the branch is pushed to the repository if the token may push there. Otherwise it goes to your fork, which is created if needed, and the pull request is opened from it. Maintainers may edit the branch.
+- **Contents:** the title and body come from the fix commit: the agent's summary and `Fixes #N`, which closes the issue when the pull request is merged. A last line says an AI coding agent prepared it.
+- **Draft by default** (`pr_draft: true` in `config/model.yaml`), where the repository allows drafts.
+- **Never overwrites anything:** no force push. If the remote already has a different branch of the same name, the next free name (`-2`, `-3`, ...) is used. If a pull request is already open for the branch, its link is shown.
+- **The token** goes to git for the push command only, as a header in the environment; it is never written to the clone's `.git/config`. It needs write access to contents and pull requests (classic tokens: `public_repo` or `repo`).
+
+Without the UI, `make run REPO=... ISSUE=... PR=1` (`--pr`) pushes and opens the pull request right after the commit, with no question: the flag is the yes.
 
 ### Project detection
 
@@ -190,15 +217,16 @@ Other files:
 make run REPO=https://github.com/owner/project ISSUE=123
 make run REPO=owner/project TASK="parser crashes on empty input"
 make run REPO=../local/project TASK="..."
+make run REPO=owner/project ISSUE=123 PR=1   # then push and open a pull request
 ```
 
-Runs the same fix workflow without the interactive session (clone, branch, agent, commit) and prints each step. The exit code tells scripts what happened: `0` a fix was committed, `1` no fix (the agent was blocked, hit a limit or changed nothing; its changes stay on the branch), `2` a setup problem (clone failed, issue not found, uncommitted changes). Ctrl-C stops the run cleanly; a second Ctrl-C quits at once.
+Runs the same fix workflow without the interactive session (clone, branch, agent, commit) and prints each step. The exit code tells scripts what happened: `0` a fix was committed, `1` no fix (the agent was blocked, hit a limit or changed nothing; its changes stay on the branch), `2` a setup problem (clone failed, issue not found, uncommitted changes), `3` the fix was committed but the pull request asked for with `PR=1` could not be opened (no `GITHUB_TOKEN`, no permission, ...). Ctrl-C stops the run cleanly; a second Ctrl-C quits at once.
 
 Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `make clean`):
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results, baseline test results, sandbox image |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results, baseline test results, sandbox image, pull request (link and number, or why it failed) |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
 | `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
@@ -271,7 +299,7 @@ Safety and limits:
 
 ## Optional: GitHub access
 
-Set `GITHUB_TOKEN` to clone private repositories (the token is passed to git for that command only, never saved in the clone), and later to push branches, open pull requests and post issues. Without it, the harness still clones, fixes and commits locally and saves the patch.
+Set `GITHUB_TOKEN` to clone private repositories and to push fixes and open [pull requests](#pull-requests). The token is passed to git for each command only, never saved in the clone, and is removed from the environment of the agent's commands. Without it, the harness still clones, fixes and commits locally and saves the patch.
 
 ## Security
 
@@ -297,6 +325,7 @@ src/agent/workspace.ts what /fix prepares before the agent: map, project, sandbo
 src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
+src/github/pr.ts      pushes the fix branch (to a fork if needed) and opens the pull request
 src/tools/            tools the agent can call
   registry.ts         looks up tools, validates input, turns failures into results
   view_file.ts        reads files with line numbers
@@ -329,7 +358,7 @@ tests/                offline tests (vitest)
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `grep`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
 | 4 ✅ | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ✅ baseline test run · ✅ optional Docker sandbox |
-| 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
+| 5 🚧 | ✅ push the fix (forking if needed) and open a pull request, with confirmation · ⬜ `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |
 | 7 | `make eval` on SWE-bench Lite |
 | 8 | Hardening, docs, demo |

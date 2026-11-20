@@ -10,6 +10,7 @@ import { fixSystemPrompt } from "./agent/prompt.js";
 import { describeTask, resolveTask, taskPrompt, taskText, type FixTask } from "./agent/task.js";
 import type { HarnessConfig } from "./config.js";
 import { GitHubError } from "./github/issues.js";
+import { describePullRequest, planPullRequest, pushAndOpenPullRequest, type GitHubOptions } from "./github/pr.js";
 import { formatUsage, type UsageTracker } from "./model/cost.js";
 import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
@@ -22,7 +23,7 @@ import { describeCall } from "./ui/repl.js";
 export const DEFAULT_RUNS_DIR = fileURLToPath(new URL("../runs/", import.meta.url));
 
 /** Exit codes, so scripts and the eval can tell the cases apart. */
-export const EXIT = { committed: 0, noFix: 1, setup: 2 } as const;
+export const EXIT = { committed: 0, noFix: 1, setup: 2, prFailed: 3 } as const;
 
 export interface HeadlessOptions {
   config: HarnessConfig;
@@ -42,6 +43,10 @@ export interface HeadlessOptions {
   signal?: AbortSignal;
   /** For tests: replaces the GitHub API's fetch. */
   fetchImpl?: typeof fetch;
+  /** After a committed fix, push it and open a pull request (needs githubToken). */
+  pr?: boolean;
+  /** For tests: other GitHub API and git hosts. */
+  githubHosts?: Pick<GitHubOptions, "apiBase" | "webBase" | "forkPollMs">;
 }
 
 /** Fixes one issue or task without the UI. Returns the process exit code. */
@@ -177,6 +182,27 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
   }
   print(outcome.message);
 
+  // 5. Pull request, when asked for (--pr / PR=1).
+  let pullRequest: Record<string, unknown> | null = null;
+  if (opts.pr && outcome.committed) {
+    if (!opts.githubToken) {
+      print("Not pushed: set GITHUB_TOKEN to push the fix and open a pull request.");
+      pullRequest = { error: "GITHUB_TOKEN is not set" };
+    } else {
+      try {
+        const plan = await planPullRequest(dir, { draft: opts.config.prDraft });
+        print(`Pushing ${plan.branch} and opening a pull request to ${plan.repo.owner}/${plan.repo.name}...`);
+        const pr = await pushAndOpenPullRequest(dir, plan, { token: opts.githubToken, signal: opts.signal, fetchImpl: opts.fetchImpl, ...opts.githubHosts });
+        print(describePullRequest(pr));
+        pullRequest = { ...pr };
+      } catch (err) {
+        if (!(err instanceof GitHubError)) throw err;
+        print(`Pull request not opened: ${err.message}`);
+        pullRequest = { error: err.message };
+      }
+    }
+  }
+
   const runDir = path.join(opts.runsDir ?? DEFAULT_RUNS_DIR, `${timestamp(new Date(started))}-${fix.branch.replace(/^harness\//, "")}`);
   await mkdir(runDir, { recursive: true });
   const record = {
@@ -231,6 +257,7 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
           excluded: baseline.excluded,
         }
       : null,
+    pullRequest,
     repoMap: map ? { files: map.files, detailedFiles: map.detailedFiles, symbols: map.symbols, chars: map.text.length, durationMs: map.durationMs } : null,
   };
   const saved = ["result.json", "transcript.json"];
@@ -241,7 +268,8 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
     saved.push("fix.patch");
   }
   print(`Run saved to ${runDir} (${saved.join(", ")}).`);
-  return outcome.committed ? EXIT.committed : EXIT.noFix;
+  if (!outcome.committed) return EXIT.noFix;
+  return pullRequest && "error" in pullRequest ? EXIT.prFailed : EXIT.committed;
 }
 
 function isDirectory(p: string): boolean {

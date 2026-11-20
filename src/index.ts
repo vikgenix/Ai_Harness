@@ -70,6 +70,7 @@ async function main(): Promise<number> {
       repo: args.repo,
       issue: args.issue,
       task: args.task,
+      pr: args.pr,
       githubToken: process.env.GITHUB_TOKEN || undefined,
       signal: abort.signal,
     });

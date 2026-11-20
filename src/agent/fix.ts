@@ -61,7 +61,7 @@ export interface FixBranch {
 }
 
 /** The repository's default branch (from origin/HEAD), as a local branch if one exists. */
-async function defaultBranch(dir: string): Promise<string | null> {
+export async function defaultBranch(dir: string): Promise<string | null> {
   try {
     const remote = await git(dir, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]); // e.g. origin/main
     const local = remote.replace(/^origin\//, "");

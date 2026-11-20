@@ -156,6 +156,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake", AI_SANDBOX: "podman" } })).toThrow(/'sandbox' \(or AI_SANDBOX\) must be one of: none, docker/);
   });
 
+  it("reads pr_draft: on by default", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } }).prDraft).toBe(true);
+    expect(loadConfig({ configPath: yamlFile(`${BASE}\npr_draft: false\n`), env: { AI_API_KEY: "sk-fake" } }).prDraft).toBe(false);
+    expect(() => loadConfig({ configPath: yamlFile(`${BASE}\npr_draft: maybe\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/pr_draft/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);

@@ -10,6 +10,7 @@ import { UsageTracker } from "../src/model/cost.js";
 import type { ChatResponse, ModelClient, ToolCall } from "../src/model/index.js";
 import { makeSourceRepo } from "./helpers.js";
 import { installFakeDocker } from "./sandbox/fake-docker.js";
+import { fakeGitHub } from "./github/fake-github.js";
 
 const config = loadConfig({ env: { AI_API_KEY: "sk-ant-fake" } });
 const savedEnv = { ...process.env };
@@ -189,6 +190,28 @@ describe("runHeadless", () => {
       expect(out).toContain("Docker is not running (Cannot connect to the Docker daemon");
       expect(out).toContain("Start Docker, or run without the sandbox (sandbox: none in config/model.yaml).");
       expect(execFileSync("git", ["branch", "--list", "harness/*"], { cwd: clone }).toString()).toBe("");
+    });
+  });
+
+  describe("with --pr", () => {
+    const fixing = () => scripted([[create("x.py", "x = 1\n")], [finish("completed", "Added x.py.")], [finish("completed", "Added x.py.")]]);
+
+    it("pushes the committed fix and opens a pull request", async () => {
+      const gh = await fakeGitHub(path.join(base, "gh-ok"));
+      const { code, out, runDir } = await headless(fixing(), { repo: gh.clone, task: "add x", pr: true, githubToken: "ghp_x", fetchImpl: gh.fetchImpl, githubHosts: gh.hosts });
+      expect(code).toBe(EXIT.committed);
+      expect(out).toContain("Pushing harness/add-x and opening a pull request to acme/demo...\nPushed to acme/demo:harness/add-x. Opened draft pull request #42");
+      expect(gh.branches("acme")).toContain("harness/add-x");
+      const record = JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8"));
+      expect(record.pullRequest).toEqual({ url: "https://github.com/acme/demo/pull/42", number: 42, pushedTo: "acme/demo:harness/add-x", created: true, draft: true });
+    });
+
+    it("exits 3 when the fix is committed but the pull request cannot be opened", async () => {
+      const gh = await fakeGitHub(path.join(base, "gh-no-token"));
+      const { code, out, runDir } = await headless(fixing(), { repo: gh.clone, task: "add y", pr: true });
+      expect(code).toBe(EXIT.prFailed);
+      expect(out).toContain("Not pushed: set GITHUB_TOKEN to push the fix and open a pull request.");
+      expect(JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8")).pullRequest).toEqual({ error: "GITHUB_TOKEN is not set" });
     });
   });
 
