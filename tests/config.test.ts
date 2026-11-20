@@ -162,6 +162,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath: yamlFile(`${BASE}\npr_draft: maybe\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/pr_draft/);
   });
 
+  it("reads max_request_tokens: unset by default (learned from the provider)", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } }).maxRequestTokens).toBeUndefined();
+    expect(loadConfig({ configPath: yamlFile(`${BASE}\nmax_request_tokens: 7000\n`), env: { AI_API_KEY: "sk-fake" } }).maxRequestTokens).toBe(7000);
+    expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nmax_request_tokens: 10\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/max_request_tokens/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);

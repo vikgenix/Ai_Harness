@@ -4,11 +4,37 @@ import { emptyUsage, type ChatResponse, type Message, type ModelClient, type Too
 import { FINISH_TOOL, type FinishInput } from "../tools/finish.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { CommandSandbox } from "../tools/types.js";
+import { CHARS_PER_TOKEN, describeShrink, requestChars, shrinkMessages } from "./context.js";
 
 /** How many times a turn is re-sent when the model's output can't be parsed. */
 const MAX_INVALID_OUTPUT_RETRIES = 2;
 /** Tool calls rejected by the provider in a row before the run stops. */
 const MAX_REJECTED_TOOL_CALLS = 3;
+/** "Request too large" errors in a row before the run stops (each one shortens the conversation further). */
+const MAX_TOO_LARGE = 3;
+/** Rate-limit waits in a row, and the longest wait, before the run stops. */
+const MAX_RATE_WAITS = 6;
+const MAX_RATE_WAIT_MS = 90_000;
+/** Share of a learned limit a request may use: the estimate of its size is rough. */
+const SAFETY = 0.85;
+
+/**
+ * Request limits learned from providers' "too large" errors, per model, for
+ * the rest of the session: later requests are shortened before they are sent.
+ */
+const learnedLimits = new Map<string, { tokens: number; charsPerToken: number }>();
+
+/** For tests. */
+export function forgetLearnedLimits(): void {
+  learnedLimits.clear();
+}
+
+/** The wait a rate-limit message asks for ("try again in 6.665s", "in 1m2.5s", "in 450ms"), or undefined. */
+export function retryAfterMs(detail: string): number | undefined {
+  const m = /try again in (?:(\d+)m)?([\d.]+)(ms|s)\b/i.exec(detail);
+  if (!m) return undefined;
+  return (Number(m[1] ?? 0) * 60 + Number(m[2]) / (m[3] === "ms" ? 1000 : 1)) * 1000;
+}
 
 export type AgentStatus =
   | "done" // the model answered without asking for more tools
@@ -27,6 +53,8 @@ export interface AgentEvents {
   onToolResult?(result: ToolResult, durationMs: number): void;
   /** The provider rejected the reply because a tool call did not match its schema; the model is told why and retries. */
   onRejectedToolCall?(detail: string): void;
+  /** Something the user should know that the loop handled: the conversation was shortened, or it waits for a rate limit. */
+  onNotice?(text: string): void;
   /** After each model response, with its cost (undefined if the model has no price). */
   onResponse?(response: ChatResponse, costUsd: number | undefined): void;
 }
@@ -41,6 +69,10 @@ export interface AgentOptions {
   env?: Record<string, string>;
   /** Runs the agent's commands in a container instead of on this machine. */
   sandbox?: CommandSandbox;
+  /** Keep each request under this many tokens (config max_request_tokens); learned from the provider when unset. */
+  maxRequestTokens?: number;
+  /** The configured output limit, never raised when a request has to fit a limit. */
+  maxOutputTokens?: number;
   tracker: UsageTracker;
   limits: { maxSteps: number; maxCostUsd: number };
   /** Earlier conversation; the new task is appended to it. */
@@ -88,6 +120,31 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
   let steps = 0;
   let finalText = "";
   let rejectedInARow = 0;
+  let tooLargeInARow = 0;
+  let rateWaits = 0;
+
+  /**
+   * The request limit in force (learned, or configured) and what it means for
+   * this request: the output cap, and the conversation shortened to fit.
+   * Returns the output cap, or a ModelError if even the shortest request is too big.
+   */
+  const fit = (): { maxOutputTokens?: number } | ModelError => {
+    const known = learnedLimits.get(model.model) ?? (opts.maxRequestTokens ? { tokens: opts.maxRequestTokens, charsPerToken: CHARS_PER_TOKEN } : undefined);
+    if (!known) return {};
+    const outputCap = Math.max(256, Math.min(opts.maxOutputTokens ?? Infinity, Math.floor(known.tokens * 0.25)));
+    const budgetChars = (known.tokens * SAFETY - outputCap) * known.charsPerToken;
+    const fixed = requestChars(opts.system, specs, []);
+    const target = budgetChars - fixed;
+    const current = requestChars("", [], messages);
+    if (current > target) {
+      const shrunk = shrinkMessages(messages, Math.max(0, target));
+      if (shrunk.outputs || shrunk.inputs || shrunk.repoMap) events?.onNotice?.(describeShrink(shrunk, known.tokens));
+      if (shrunk.after > target) {
+        return new ModelError("too_large", `the system prompt, tools and latest turn need about ${Math.round((fixed + shrunk.after) / known.charsPerToken)} tokens; the limit is ${known.tokens}`);
+      }
+    }
+    return { maxOutputTokens: outputCap };
+  };
 
   const end = (status: AgentStatus, error?: ModelError, finished?: FinishInput): AgentResult => {
     closeOpenCalls(messages, status);
@@ -98,11 +155,35 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
     if (steps >= limits.maxSteps) return end("max_steps");
     if (costUsd >= limits.maxCostUsd) return end("budget");
 
+    const fitted = fit();
+    if (fitted instanceof ModelError) return end("error", fitted);
+
     let res: ChatResponse;
     try {
-      res = await chatWithRetry(model, { system: opts.system, messages, tools: specs, signal, onText: events?.onText });
+      res = await chatWithRetry(model, { system: opts.system, messages, tools: specs, signal, onText: events?.onText, ...fitted });
     } catch (err) {
       if (!(err instanceof ModelError)) throw err;
+      // Too big for the model or the plan: learn the limit, shorten the conversation, try again.
+      if (err.kind === "too_large" && tooLargeInARow < MAX_TOO_LARGE && !signal?.aborted) {
+        tooLargeInARow++;
+        const chars = requestChars(opts.system, specs, messages);
+        const estimated = chars / CHARS_PER_TOKEN;
+        const previous = learnedLimits.get(model.model);
+        // Without numbers in the message, aim for 60% of the request that failed (or of the last limit tried).
+        const limit = err.sizes.limit ?? Math.floor(Math.min(previous?.tokens ?? Infinity, estimated) * 0.6);
+        const charsPerToken = err.sizes.requested ? Math.min(5, Math.max(2.5, chars / err.sizes.requested)) : CHARS_PER_TOKEN;
+        learnedLimits.set(model.model, { tokens: Math.min(limit, previous?.tokens ?? Infinity), charsPerToken: Math.min(charsPerToken, previous?.charsPerToken ?? Infinity) });
+        events?.onNotice?.(`The request was too large for ${model.model} (${err.sizes.requested ? `${err.sizes.requested.toLocaleString("en-US")} tokens; ` : ""}limit ${limit.toLocaleString("en-US")}). Shortening the conversation and trying again.`);
+        continue;
+      }
+      // A per-minute limit: wait as long as the provider says, then try again.
+      const wait = err.kind === "rate_limit" ? retryAfterMs(err.detail) : undefined;
+      if (wait !== undefined && wait <= MAX_RATE_WAIT_MS && rateWaits < MAX_RATE_WAITS && !signal?.aborted) {
+        rateWaits++;
+        events?.onNotice?.(`Rate limit: waiting ${(wait / 1000).toFixed(1)}s as the provider asks.`);
+        if (!(await sleep(wait + 250, signal))) return end("cancelled");
+        continue;
+      }
       // The provider refused a tool call that did not match the schema (no tool ran):
       // tell the model what was wrong, as for input the registry rejects, and let it retry.
       if (err.kind === "invalid_tool_call" && rejectedInARow < MAX_REJECTED_TOOL_CALLS && !signal?.aborted) {
@@ -117,6 +198,8 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
 
     steps++;
     rejectedInARow = 0;
+    tooLargeInARow = 0;
+    rateWaits = 0;
     messages.push(res.message);
     finalText = res.message.content;
     addUsage(usage, res.usage);
@@ -180,6 +263,22 @@ function addUserNote(messages: Message[], note: string): void {
 }
 
 /** Re-sends a turn whose output could not be parsed (e.g. broken streamed tool JSON). */
+/** Waits, or stops early when cancelled. Returns false if cancelled. */
+function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve(false);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function chatWithRetry(model: ModelClient, request: Parameters<ModelClient["chat"]>[0]): Promise<ChatResponse> {
   for (let attempt = 0; ; attempt++) {
     try {

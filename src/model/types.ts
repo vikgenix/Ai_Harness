@@ -88,6 +88,8 @@ export interface ChatRequest {
   /** Called with each piece of text as it streams in. */
   onText?: (delta: string) => void;
   signal?: AbortSignal;
+  /** Lower output limit for this request than the configured one (to fit a provider's request limit). */
+  maxOutputTokens?: number;
 }
 
 /** Token counts, normalised: inputTokens never includes cached tokens. */

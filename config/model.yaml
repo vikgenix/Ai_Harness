@@ -20,6 +20,13 @@ base_url: null
 
 max_output_tokens: 16000
 
+# Largest request (in tokens) the model or your plan accepts. null: Shrike
+# learns it from the provider's "request too large" error and from then on
+# shortens the conversation to fit (old tool outputs first). Set it to start
+# within the limit right away, e.g. 7000 for Groq's free tier (8,000 tokens a
+# minute for openai/gpt-oss-120b).
+max_request_tokens: null
+
 # How hard the model thinks: low | medium | high | xhigh | max, or null to
 # leave it to the provider. Higher fixes harder bugs but uses more tokens.
 # Translated per provider (Anthropic `effort`, OpenAI/Groq `reasoning_effort`).

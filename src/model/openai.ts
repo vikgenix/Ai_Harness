@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { Effort, HarnessConfig } from "../config.js";
 import type { Provider } from "../providers.js";
-import { ModelError } from "./errors.js";
+import { isTooLarge, ModelError } from "./errors.js";
 import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
@@ -66,7 +66,9 @@ export class OpenAICompatibleClient implements ModelClient {
       messages: [{ role: "system", content: request.system }, ...request.messages.flatMap(toParams)],
       ...(request.tools?.length ? { tools: request.tools.map(toTool) } : {}),
       // OpenAI and Groq use the newer name; generic servers mostly know only max_tokens.
-      ...(provider === "openai-compatible" ? { max_tokens: maxOutputTokens } : { max_completion_tokens: maxOutputTokens }),
+      ...(provider === "openai-compatible"
+        ? { max_tokens: request.maxOutputTokens ?? maxOutputTokens }
+        : { max_completion_tokens: request.maxOutputTokens ?? maxOutputTokens }),
       ...(temperature !== undefined && !(provider === "openai" && reasoning) ? { temperature } : {}),
       ...(seed !== undefined && !(provider === "openai" && reasoning) ? { seed } : {}),
       ...(effort && acceptsReasoningEffort(model) ? { reasoning_effort: toReasoningEffort(effort) } : {}),
@@ -198,6 +200,7 @@ export function toModelError(err: unknown): ModelError {
   if (err instanceof OpenAI.APIConnectionError) return new ModelError("network", err.message, undefined, opts);
   if (err instanceof OpenAI.APIError) {
     const detail = err.message;
+    if (isTooLarge(err.status, detail)) return new ModelError("too_large", detail, err.status, opts);
     // Groq (and some other hosts) check tool calls against the schema and reject the whole reply.
     if (err.code === "tool_use_failed" || /tool call validation failed|tool_use_failed/i.test(detail)) {
       return new ModelError("invalid_tool_call", detail, err.status, opts);

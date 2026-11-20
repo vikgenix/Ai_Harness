@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { HarnessConfig } from "../config.js";
 import { DEFAULT_BASE_URLS } from "../providers.js";
-import { ModelError } from "./errors.js";
+import { isTooLarge, ModelError } from "./errors.js";
 import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
@@ -39,7 +39,7 @@ export class AnthropicClient implements ModelClient {
     const useFallback = this.settings.refusalFallback && FALLBACK_MODELS.has(this.model);
     return {
       model: this.model,
-      max_tokens: this.settings.maxOutputTokens,
+      max_tokens: request.maxOutputTokens ?? this.settings.maxOutputTokens,
       // Automatic prompt caching: caches the longest stable prefix
       // (system prompt + earlier turns), so each new turn pays full price only
       // for what is new.
@@ -166,6 +166,7 @@ export function toModelError(err: unknown): ModelError {
   if (err instanceof Anthropic.APIConnectionError) return new ModelError("network", err.message, undefined, opts);
   if (err instanceof Anthropic.APIError) {
     const detail = err.apiMessage ?? err.message;
+    if (isTooLarge(err.status, detail)) return new ModelError("too_large", detail, err.status, opts);
     if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
       return new ModelError("auth", detail, err.status, opts);
     }

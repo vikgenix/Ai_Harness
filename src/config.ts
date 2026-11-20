@@ -28,6 +28,8 @@ export interface HarnessConfig {
   /** Never print this. Use describeConfig() for display. */
   apiKey: string;
   maxOutputTokens: number;
+  /** Keep each request under this many tokens (input + output limit); undefined learns it from the provider. */
+  maxRequestTokens: number | undefined;
   /** Reasoning depth; undefined leaves it to the provider. */
   effort: Effort | undefined;
   /** Anthropic: let the API retry a declined request on another model. */
@@ -169,6 +171,7 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     baseUrl,
     apiKey,
     maxOutputTokens: optionalNumber(file, "max_output_tokens", 1, 1_000_000) ?? 16000,
+    maxRequestTokens: optionalNumber(file, "max_request_tokens", 1000, 10_000_000),
     effort: effortValue as Effort | undefined,
     refusalFallback,
     repoMapTokens: optionalNumber(file, "repo_map_tokens", 0, 50_000) ?? 3000,

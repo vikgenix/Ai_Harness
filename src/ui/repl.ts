@@ -215,6 +215,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         root: workdir,
         env: toolEnv,
         sandbox,
+        maxRequestTokens: config.maxRequestTokens,
+        maxOutputTokens: config.maxOutputTokens,
         tracker,
         limits: config.limits,
         history: mode.history ?? history,
@@ -233,6 +235,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             else if (r.isError) line(dim(`    ✗ ${r.content.split("\n")[0]}`));
           },
           onRejectedToolCall: (detail) => line(dim(`    ✗ tool call rejected by the API, retrying: ${detail}`)),
+          onNotice: (text) => line(dim(`  ⤓ ${text}`)),
           onResponse: (_res, cost) => {
             steps++;
             runCost = cost === undefined || runCost === undefined ? undefined : runCost + cost;

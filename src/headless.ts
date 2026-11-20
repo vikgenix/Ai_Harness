@@ -139,6 +139,8 @@ async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Pr
     root: dir,
     env: ws.env,
     sandbox: ws.sandbox,
+    maxRequestTokens: opts.config.maxRequestTokens,
+    maxOutputTokens: opts.config.maxOutputTokens,
     tracker: opts.tracker,
     limits: opts.config.limits,
     task: fixMessage(taskPrompt(task), ws),
@@ -278,6 +280,7 @@ function progress(output: Writable) {
       if (r.isError) line(`    ✗ ${r.content.split("\n")[0]}`);
     },
     onRejectedToolCall: (detail) => line(`    ✗ tool call rejected by the API, retrying: ${detail}`),
+    onNotice: (text) => line(`  ⤓ ${text}`),
   };
   const endLine = () => {
     if (!atLineStart) output.write("\n");
@@ -318,6 +321,8 @@ async function audit(opts: HeadlessOptions, dir: string, held: { sandbox?: Docke
           root: dir,
           env: ws?.env,
           sandbox: ws?.sandbox,
+          maxRequestTokens: opts.config.maxRequestTokens,
+          maxOutputTokens: opts.config.maxOutputTokens,
           tracker: opts.tracker,
           limits: opts.config.limits,
           task: message,

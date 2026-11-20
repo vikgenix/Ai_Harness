@@ -9,7 +9,7 @@ import {
   type Part,
 } from "@google/genai";
 import type { Effort, HarnessConfig } from "../config.js";
-import { ModelError } from "./errors.js";
+import { isTooLarge, ModelError } from "./errors.js";
 import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
@@ -71,7 +71,7 @@ export class GeminiClient implements ModelClient {
       contents: request.messages.map(toContent),
       config: {
         systemInstruction: request.system,
-        maxOutputTokens,
+        maxOutputTokens: request.maxOutputTokens ?? maxOutputTokens,
         ...(temperature !== undefined && !isGemini3(model) ? { temperature } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...thinkingConfig(model, effort),
@@ -234,6 +234,7 @@ export function toModelError(err: unknown): ModelError {
   if (err instanceof ApiError) {
     const s = err.status;
     const detail = readableGeminiMessage(err.message);
+    if (isTooLarge(s, detail)) return new ModelError("too_large", detail, s, opts);
     // An invalid key is a 400 with this reason code, not a 401.
     if (s === 401 || s === 403 || err.message.includes("API_KEY_INVALID")) return new ModelError("auth", detail, s, opts);
     if (s === 404) return new ModelError("not_found", detail, s, opts);
