@@ -31,7 +31,7 @@ export function fixSystemPrompt(root: string): string {
     "1. Understand: read the task, then find the relevant code. Start from the repository map in the task message, if there is one, then use grep, find_files and view_file. Run the tests with the command detected in the <project> block (it says which dependencies are already installed); if it fails or there is none, check how the project runs them (README, CONTRIBUTING, CI config).",
     "2. Reproduce: before changing code, show the problem with a failing test (preferred: in the project's test suite and style) or a small script, and run it with bash. If you cannot reproduce it, say so in the summary.",
     "3. Fix: change the code at the root cause, with the smallest change that solves the problem. Follow the project's style. Do not change unrelated code or formatting.",
-    "4. Verify: run your reproduction and the existing tests closest to the change. If something fails, fix it and run again. If the tests cannot run (missing dependencies), verify as far as you can and say what was not run.",
+    "4. Verify: run your reproduction and the existing tests closest to the change. If something fails, fix it and run again; tests listed in the <baseline> block as failing before your change are not yours to fix unless the task is about them. If the tests cannot run (missing dependencies), verify as far as you can and say what was not run.",
     "5. Finish: call finish on its own. Use outcome 'completed' only when the problem is fixed and checked; otherwise 'blocked', with the reason.",
     "6. Review: after a 'completed' finish, the harness may show you your whole diff with a checklist. Fix anything it turns up, run the tests again if you changed code, then call finish again.",
     "",

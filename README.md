@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–3 done, Phase 4 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, branch, reproduce → fix → verify, self-review, commit. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–3 done, Phase 4 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -97,6 +97,32 @@ The agent's `bash` commands run with the environment active (`VIRTUAL_ENV`, the 
 
 `make clean` removes `envs/`.
 
+### Baseline
+
+Next, `/fix` runs the detected test command once on the unchanged code, so the agent knows whether the tests run at all and which ones already fail. It then doesn't chase failures it didn't cause, or think it broke them:
+
+```
+  Python: python3 -m pytest -rfE --continue-on-collection-errors
+  ✗ Python: 1 failed, 1 error, 1 passed (0.2s)
+Baseline: Python: 1 failed, 1 error, 1 passed (0.2s).
+```
+
+The agent gets the result in a `<baseline>` block:
+
+```
+- `python3 -m pytest -rfE --continue-on-collection-errors`: 1 failed, 1 error, 1 passed (0.2s). Already failing before your change (...):
+  - tests/test_math.py::test_known_bug - AssertionError: assert 'A' == 'a'
+  - tests/test_broken.py - ModuleNotFoundError: No module named 'not_a_real_module'
+```
+
+- **Counts and failing tests** are read from the output of pytest, unittest (and Django), cargo, `go test`, jest, vitest, `node --test`, mocha, RSpec, PHPUnit, Maven, Gradle and `dotnet test`. For pytest, the harness adds `-rfE` (failing tests with their reason) and `--continue-on-collection-errors` (one broken test file does not stop the rest).
+- **Could not run:** the agent gets the end of the output (a missing module, a wrong command) and is told to fix the setup or verify another way.
+- **Slow suites** are stopped after `baseline_timeout_s` (default 120). The agent is then told to run only the tests near its change, with the command for a single test.
+- **Cached** per commit, command and installed dependencies, so a second `/fix` of the same code takes no time.
+- **The repository stays clean:** files the tests change or leave behind are restored or added to `.git/info/exclude`, as for the install.
+
+The tests run with the installed dependencies, and without the harness's API keys. Ctrl-C skips the baseline. Set `baseline_tests: false` in `config/model.yaml` to turn it off.
+
 ### Self-review
 
 Agents often finish with a working fix plus things that should not be committed: a `print` left from debugging, a `repro.py` scratch script, a reformatted file, or no regression test. Before a fix is accepted, the agent sees its whole diff against the base branch (new files included, caches left out) and what the harness found automatically:
@@ -146,7 +172,7 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results, baseline test results |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
 | `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
@@ -239,6 +265,7 @@ src/repo/clone.ts     parses repository URLs, clones into workspaces/
 src/repo/map.ts       repository map: tree-sitter symbols, ranked by the task, within a token budget
 src/repo/detect.ts    project detection: ecosystems, test commands, installed tools
 src/repo/env.ts       dependency install into envs/, keeping the repository clean
+src/repo/baseline.ts  baseline test run: test output parsers, cache, the <baseline> block
 src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
@@ -273,7 +300,7 @@ tests/                offline tests (vitest)
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `grep`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
-| 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ⬜ baseline test run · ⬜ optional Docker sandbox |
+| 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ✅ baseline test run · ⬜ optional Docker sandbox |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |
 | 7 | `make eval` on SWE-bench Lite |

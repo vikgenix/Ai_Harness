@@ -14,6 +14,7 @@ import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
 import { describeProject, projectBlock, projectFor, withProject } from "../repo/detect.js";
 import { dependencyLines, describeSetup, existingEnvironment, prepareEnvironment } from "../repo/env.js";
+import { describeBaseline, runBaseline, withBaseline } from "../repo/baseline.js";
 import { describeRepoMap, repoMapFor, withRepoMap } from "../repo/map.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
@@ -254,10 +255,20 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         toolEnv = setup.env;
       }
     }
+    let baseline;
+    if (project && config.baselineTests) {
+      inFlight = new AbortController(); // Ctrl-C stops the baseline; the fix goes on without it
+      try {
+        baseline = await runBaseline(workdir, project, { env: toolEnv, envsDir: opts.envsDir, timeoutS: config.baselineTimeoutS, signal: inFlight.signal, onProgress: print });
+      } finally {
+        inFlight = undefined;
+      }
+      if (baseline) print(describeBaseline(baseline));
+    }
 
     // A fix is its own conversation; afterwards the chat continues from it.
     const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
-    const message = withProject(taskPrompt(task), project, setup && dependencyLines(setup));
+    const message = withProject(withBaseline(taskPrompt(task), baseline, project), project, setup && dependencyLines(setup));
     const result = await send(withRepoMap(message, map), { system: fixSystemPrompt(workdir), history: [], review });
     try {
       print((await completeFix(workdir, branch, task, result)).message);

@@ -223,7 +223,7 @@ const stampFile = (envDir: string, e: Ecosystem) => path.join(envDir, "stamps", 
 // --- keeping the repository clean ------------------------------------------------
 
 /** `git status` as path to status code ("??" for untracked), or undefined outside a git repository. */
-async function statusOf(root: string): Promise<Map<string, string> | undefined> {
+export async function statusOf(root: string): Promise<Map<string, string> | undefined> {
   let out: string;
   try {
     out = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"]);
@@ -242,8 +242,12 @@ async function statusOf(root: string): Promise<Map<string, string> | undefined> 
   return entries;
 }
 
-/** Puts back tracked files the install changed and hides the files it made. */
-async function keepClean(root: string, before: Map<string, string>): Promise<{ restored: string[]; excluded: string[] }> {
+/**
+ * Puts back tracked files changed since `before` (a statusOf snapshot) and
+ * lists new files in .git/info/exclude, so what the harness itself ran
+ * (an install, the baseline tests) never ends up in a fix.
+ */
+export async function keepClean(root: string, before: Map<string, string>, madeBy = "installing dependencies"): Promise<{ restored: string[]; excluded: string[] }> {
   const after = (await statusOf(root)) ?? new Map<string, string>();
   const changed = [...after].filter(([p, code]) => before.get(p) !== code);
   const restored = changed.filter(([p, code]) => code !== "??" && !before.has(p)).map(([p]) => p);
@@ -253,7 +257,7 @@ async function keepClean(root: string, before: Map<string, string>): Promise<{ r
     const file = path.resolve(root, await git(root, ["rev-parse", "--git-path", "info/exclude"]));
     await mkdir(path.dirname(file), { recursive: true });
     const lines = excluded.map((p) => `/${p.replace(/([\\*?[])/g, "\\$1")}`);
-    await appendFile(file, `\n# Made by installing dependencies (AI Harness)\n${lines.join("\n")}\n`);
+    await appendFile(file, `\n# Made by ${madeBy} (AI Harness)\n${lines.join("\n")}\n`);
   }
   return { restored, excluded };
 }

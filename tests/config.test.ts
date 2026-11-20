@@ -140,6 +140,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath: yamlFile(`${BASE}\ninstall_deps: yes please\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/install_deps/);
   });
 
+  it("reads baseline_tests (on by default) and baseline_timeout_s", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } })).toMatchObject({ baselineTests: true, baselineTimeoutS: 120 });
+    const off = loadConfig({ configPath: yamlFile(`${BASE}\nbaseline_tests: false\nbaseline_timeout_s: 30\n`), env: { AI_API_KEY: "sk-fake" } });
+    expect(off).toMatchObject({ baselineTests: false, baselineTimeoutS: 30 });
+    expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nbaseline_timeout_s: 1\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/baseline_timeout_s/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);

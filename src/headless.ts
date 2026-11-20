@@ -15,6 +15,7 @@ import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
 import { describeProject, projectFor, withProject } from "./repo/detect.js";
 import { dependencyLines, describeSetup, prepareEnvironment } from "./repo/env.js";
+import { describeBaseline, runBaseline, withBaseline } from "./repo/baseline.js";
 import { describeRepoMap, repoMapFor, withRepoMap } from "./repo/map.js";
 import { createDefaultTools } from "./tools/index.js";
 import { describeCall } from "./ui/repl.js";
@@ -100,6 +101,11 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       ? await prepareEnvironment(dir, project, { envsDir: opts.envsDir, timeoutS: opts.config.installTimeoutS, signal: opts.signal, onProgress: print })
       : undefined;
   if (setup) print(describeSetup(setup));
+  const baseline =
+    project && opts.config.baselineTests
+      ? await runBaseline(dir, project, { env: setup?.env, envsDir: opts.envsDir, timeoutS: opts.config.baselineTimeoutS, signal: opts.signal, onProgress: print })
+      : undefined;
+  if (baseline) print(describeBaseline(baseline));
   print();
 
   // 3. Agent. Model text is streamed; tool calls are shown one per line.
@@ -123,7 +129,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     env: setup?.env,
     tracker: opts.tracker,
     limits: opts.config.limits,
-    task: withRepoMap(withProject(taskPrompt(task), project, setup && dependencyLines(setup)), map),
+    task: withRepoMap(withProject(withBaseline(taskPrompt(task), baseline, project), project, setup && dependencyLines(setup)), map),
     signal: opts.signal,
     events: {
       onText: write,
@@ -190,6 +196,25 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
           results: setup.results.map((r) => ({ name: r.name, dir: r.dir, status: r.status, commands: r.commands, durationMs: r.durationMs, failed: r.failed ?? null })),
           restored: setup.restored,
           excluded: setup.excluded,
+        }
+      : null,
+    baseline: baseline
+      ? {
+          durationMs: baseline.durationMs,
+          runs: baseline.runs.map((r) => ({
+            name: r.name,
+            dir: r.dir,
+            command: r.command,
+            status: r.status,
+            framework: r.framework ?? null,
+            counts: r.counts ?? null,
+            failing: r.failing,
+            exitCode: r.exitCode,
+            durationMs: r.durationMs,
+            cached: r.cached,
+          })),
+          restored: baseline.restored,
+          excluded: baseline.excluded,
         }
       : null,
     repoMap: map ? { files: map.files, detailedFiles: map.detailedFiles, symbols: map.symbols, chars: map.text.length, durationMs: map.durationMs } : null,

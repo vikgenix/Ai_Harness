@@ -46,6 +46,13 @@ self_review: true
 install_deps: true
 install_timeout_s: 600
 
+# Baseline: run the detected test command once on the unchanged code before
+# /fix starts, so the agent knows which tests already fail (and whether the
+# tests run at all). Cached per commit. A suite slower than the timeout is
+# stopped, and the agent is told to run only the tests near its change.
+baseline_tests: true
+baseline_timeout_s: 120
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0
