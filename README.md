@@ -2,7 +2,7 @@
 
 A coding agent for the terminal, named after the small bird that hunts insects and pins its catch: Shrike finds bugs, pins each one down with a failing test, and fixes it. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–6 done. Shrike talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs in a full-screen terminal UI, as plain lines, or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–6 done. Shrike talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox, and pushes the fix and opens a pull request when you ask. `/audit` looks for bugs and drafts GitHub issues, posting each one only if you approve it. It runs in a terminal UI, as plain lines, or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -35,36 +35,49 @@ Inside Shrike, type a request about the code in the working directory (by defaul
 
 ### Terminal UI
 
-In a terminal, `make run` opens a full-screen UI:
+In a terminal, `make run` opens Shrike's terminal UI. The conversation is printed into the terminal like any program's output, so the mouse wheel, scrollback, selecting and copying all work as usual. Only the input box and the lines just above and below it are redrawn in place:
 
 ```
- ▲ shrike  acme__demo · shrike/fix-7                                              claude-opus-5-5
-┌─ Task ──────────────────────────┐┌─ Activity ──────────────────────────────────────────────────┐
-│FIX #7 Greeting is too quiet     ││I'll look at the greeting code first.                        │
-│                                 ││  ✓ grep(pattern=greet)                                  0.1s│
-│acme/demo · open · bug           ││  ✓ view_file(path=src/app.py)                           0.0s│
-├─ Progress ──────────────────────┤│  ⠧ bash(command=python -m pytest tests -x -q)           4.2s│
-│✓ Branch       shrike/fix-7      │├─ Diff · 1 file +1 -1 ───────────────────────────────────────┤
-│✓ Baseline     12 passed         ││▍ src/app.py                                                 │
-│⠧ Agent                          ││@@ -1,2 +1,2 @@                                              │
-├─ Files ─────────────────────────┤│-    return 'hi ' + name                                     │
-│M src/app.py              +1 -1  ││+    return 'HI ' + name                                     │
-└─────────────────────────────────┘└─────────────────────────────────────────────────────────────┘
- ⠧ 12.4s  │  step 7/60  │  41.2k in · 3.1k out  │  $0.21 / $2.00  │  session $0.53
-shrike › _
- Ctrl-C cancel · PgUp/PgDn activity · Ctrl-↑↓ diff
+› /fix make the greeting loud
+
+  ✓ Branch  shrike/make-the-greeting-loud (from main)
+  ✓ Prepare  1.2s
+  ✓ Repo map  14 files, 52 symbols
+  ✓ Baseline  12 passed
+  – Skipped: Dependencies (up to date)
+
+● I'll find where the greeting is built.
+  ✓ Search "def greet" in src  0.1s
+  ✓ Read src/app.py  0.0s
+
+● The greeting is lowercase. Changing greet to shout:
+  ✓ Edit src/app.py  +1 -1  0.0s
+      -     return 'hi ' + name
+      +     return 'HI ' + name
+  ⠧ Run python -m pytest tests -x -q  4.2s
+
+  ⠧ Agent 12.4s · step 7/60 · 41.2k in · 3.1k out · $0.21 / $2.00
+╭──────────────────────────────────────────────────────────────────────────╮
+│ › Esc to cancel · type to queue a message                                │
+╰──────────────────────────────────────────────────────────────────────────╯
+ Esc to cancel                                    acme__demo · shrike/fix-7
 ```
 
-- **Task:** the issue or task being worked on.
-- **Progress:** each step of a fix or audit (branch, repo map, dependencies, baseline, agent, self-review, commit) with its result.
-- **Files:** the changed files with their line counts.
-- **Activity:** the agent's text and every tool call, with a spinner while it runs, then ✓ or ✗ and how long it took.
-- **Diff:** the colour diff of the changes so far, updated after each edit.
-- **Status bar:** steps, tokens, the cost of this run against its limit, and the session's total.
+- **Your messages** start with `›`, and **the model's replies** with `●`. Markdown in replies (headings, lists, **bold**, `code`, code blocks) is shown styled.
+- **Tool calls** are one short line each: ✓ or ✗, what was done, and how long it took. While a call runs, it shows a spinner. An edit also shows the lines it removed and added, and `/diff` shows all changes so far.
+- **The steps of a fix or audit** (branch, repository map, baseline, agent, self-review, commit) get a ✓ line each when they finish. Skipped steps share one line.
+- **The status line** above the input box shows, while Shrike works: the current step, time, model requests, tokens, and the cost of this run against its limit.
 
-Keys: Enter sends, Tab completes a command (matching commands are shown while you type `/`), ↑/↓ go through earlier lines, PgUp/PgDn scroll the activity (Esc goes back to the end), Ctrl-↑/↓ scroll the diff, and Ctrl-L redraws. Ctrl-C cancels the work in progress; when idle, it clears the line, and pressed twice it quits (as does Ctrl-D on an empty line). Questions such as "Push this branch? [y/N]" appear on the input line. Below 100×22 the left column folds into one line, and the UI needs at least 50×12.
+Keys:
+- **Enter** sends. Long input wraps inside the box.
+- **Typing `/`** opens the command menu. ↑/↓ pick a command, Tab completes it, and Enter runs it. A command that needs an argument, such as `/fix`, shows a hint for it.
+- **↑/↓ outside the menu** go through earlier lines.
+- **Esc** cancels the work in progress, or clears the line when idle. **Ctrl-C** does the same; pressed twice when idle, it quits, as does **Ctrl-D** on an empty line.
+- **Ctrl-L** clears the screen.
 
-The UI is drawn without libraries: it uses the alternate screen (your scrollback is untouched) and redraws only the rows that change. It gives the terminal back as it found it when Shrike exits, also after an error. `make run PLAIN=1` (`--plain`) keeps the plain line-by-line session, which is also used when the input or output is not a terminal, or `TERM=dumb`.
+Questions such as "Push this branch? [y/N]" appear as the title of the input box.
+
+The UI is drawn without libraries and works the same in any terminal. When Shrike exits, the input box is removed and the conversation stays in your terminal, also after an error. `make run PLAIN=1` (`--plain`) keeps the plain line-by-line session, which is also used when the input or output is not a terminal, or `TERM=dumb`.
 
 ### Cloning
 
@@ -411,7 +424,7 @@ src/model/            provider-neutral model client
   cost.ts             price table lookup and usage tracking
 src/ui/repl.ts        interactive session: commands, chat, /fix, /audit, /pr (prints lines; reports to a view)
 src/ui/view.ts        what the session reports to the TUI: task, stages, tool calls, usage, questions
-src/ui/tui/           full-screen UI: layout (pure), keys and line editor, text measuring, the terminal driver
+src/ui/tui/           terminal UI: what it prints (pure), keys and line editor, text measuring, the terminal driver
 scripts/              Node.js bootstrap, secret scan, clean-environment test
 tests/                offline tests (vitest)
 ```

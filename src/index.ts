@@ -85,7 +85,7 @@ async function main(): Promise<number> {
     initialRepo: args.repo,
     githubToken: process.env.GITHUB_TOKEN || undefined,
   };
-  // The full-screen UI needs a real terminal; pipes, TERM=dumb and --plain get the line mode.
+  // The terminal UI needs a real terminal; pipes, TERM=dumb and --plain get the line mode.
   if (!args.plain && process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== "dumb") await startTui(session);
   else {
     console.log();

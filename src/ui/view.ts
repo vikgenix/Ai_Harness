@@ -1,9 +1,9 @@
 import type { ToolCall, ToolResult } from "../model/types.js";
 
 /**
- * What the interactive session reports beyond the text it prints, for a
- * screen that shows it in panels (the TUI). The plain line mode has no view
- * and prints everything instead.
+ * What the interactive session reports beyond the text it prints, for the
+ * TUI, which styles each kind of output on its own. The plain line mode has
+ * no view and prints everything instead.
  */
 export type StageState = "running" | "done" | "failed" | "skipped";
 
@@ -22,6 +22,8 @@ export interface UsageInfo {
 }
 
 export interface SessionView {
+  /** The model's reply as it streams (with a view, it is not printed). */
+  text(chunk: string): void;
   /** Where the tools work; with a branch and its base commit while a fix is under way (for the diff). */
   context(info: { workdir: string; branch?: string; base?: string; sandbox?: string }): void;
   /** What the session works on: a fix's issue or task, an audit, or the chat. Starts a new list of stages. */

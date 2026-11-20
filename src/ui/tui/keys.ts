@@ -6,6 +6,8 @@
 export type Key =
   | { name: "char"; ch: string }
   | { name: "paste"; text: string }
+  /** The mouse wheel: `delta` -1 is up, 1 is down; row and col (0-based) are where the pointer is. */
+  | { name: "wheel"; delta: -1 | 1; row: number; col: number }
   | {
       name:
         | "enter"
@@ -23,6 +25,8 @@ export type Key =
         | "pagedown"
         | "ctrl-up"
         | "ctrl-down"
+        | "shift-up"
+        | "shift-down"
         | "word-left"
         | "word-right"
         | "ctrl-a"
@@ -36,7 +40,7 @@ export type Key =
     };
 
 /** Keys that are just a name (not a typed character or a paste). */
-type NamedKey = Exclude<Key, { name: "char" } | { name: "paste" }>["name"];
+type NamedKey = Exclude<Key, { name: "char" } | { name: "paste" } | { name: "wheel" }>["name"];
 
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
@@ -63,6 +67,8 @@ const SEQUENCES: Record<string, NamedKey> = {
   "\x1b[6~": "pagedown",
   "\x1b[1;5A": "ctrl-up",
   "\x1b[1;5B": "ctrl-down",
+  "\x1b[1;2A": "shift-up",
+  "\x1b[1;2B": "shift-down",
   "\x1b[1;3A": "ctrl-up", // Alt-Up
   "\x1b[1;3B": "ctrl-down",
   "\x1b[1;5C": "word-right",
@@ -101,6 +107,12 @@ export function parseKeys(data: string): Key[] {
       continue;
     }
     if (data[i] === "\x1b") {
+      const mouse = mouseEvent(data, i);
+      if (mouse) {
+        if (mouse.key) keys.push(mouse.key);
+        i += mouse.length;
+        continue;
+      }
       const seq = Object.keys(SEQUENCES)
         .filter((s) => data.startsWith(s, i))
         .sort((a, b) => b.length - a.length)[0];
@@ -130,6 +142,31 @@ export function parseKeys(data: string): Key[] {
     i += ch.length;
   }
   return keys;
+}
+
+/**
+ * A mouse report at `data[i]`: SGR (`ESC [ < b ; col ; row M`), or the older
+ * `ESC [ M b col row` for terminals without SGR. Only the wheel is used; clicks
+ * and drags are read and dropped so they never reach the input line.
+ */
+function mouseEvent(data: string, i: number): { key?: Key; length: number } | undefined {
+  let button: number;
+  let col: number;
+  let row: number;
+  let press = true;
+  let length: number;
+  const sgr = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(data.slice(i, i + 32));
+  if (sgr) {
+    [button, col, row] = [Number(sgr[1]), Number(sgr[2]), Number(sgr[3])];
+    press = sgr[4] === "M";
+    length = sgr[0].length;
+  } else if (data.startsWith("\x1b[M", i) && data.length >= i + 6) {
+    [button, col, row] = [data.charCodeAt(i + 3) - 32, data.charCodeAt(i + 4) - 32, data.charCodeAt(i + 5) - 32];
+    length = 6;
+  } else return undefined;
+  const plain = button & ~(4 | 8 | 16); // without Shift, Alt and Ctrl
+  if (press && (plain === 64 || plain === 65)) return { key: { name: "wheel", delta: plain === 64 ? -1 : 1, row: row - 1, col: col - 1 }, length };
+  return { length };
 }
 
 /** The input line: editing, history (up/down) and Tab completion of slash commands. */

@@ -62,7 +62,7 @@ export interface ReplOptions {
   tools?: ToolRegistry;
   input?: Readable;
   output?: Writable & { isTTY?: boolean };
-  /** A screen that shows the session in panels (the TUI); without one, everything is printed as lines. */
+  /** The TUI, which styles each kind of output; without one, everything is printed as lines. */
   view?: SessionView;
 }
 
@@ -113,7 +113,7 @@ function reportWorkspace(view: SessionView | undefined, ws: Workspace): void {
 
 /**
  * The interactive session: chat, /fix, /audit, /pr and the other commands.
- * It prints as lines, or, given a view, also reports to the full-screen TUI.
+ * It prints as lines, or, given a view, also reports to the TUI.
  */
 export async function startRepl(opts: ReplOptions): Promise<void> {
   const { config, model, tracker, view } = opts;
@@ -194,6 +194,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     let atLineStart = true;
     const write = (s: string) => {
       if (!s) return;
+      if (view) return view.text(s); // the view keeps its own lines apart
       output.write(s);
       atLineStart = s.endsWith("\n");
     };
@@ -355,8 +356,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         view?.stage("Branch", "failed", "the working tree is not clean");
         return;
       }
-      print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
-      view?.stage("Branch", "done", branch.branch);
+      if (view) view.stage("Branch", "done", `${branch.branch} (from ${branch.baseName})`);
+      else print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
       showContext({ branch: branch.branch, base: branch.base });
       // Ctrl-C during the install or the baseline skips that step; the fix goes on without it.
       view?.stage("Prepare", "running");
@@ -375,8 +376,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       if (review?.rounds) view?.stage("Self-review", "done", `${review.rounds} ${review.rounds === 1 ? "round" : "rounds"}, ${review.findings.length} found`);
       try {
         const outcome = await completeFix(workdir, branch, task, result);
-        print(outcome.message);
-        view?.stage("Commit", outcome.committed ? "done" : "skipped", outcome.committed ? outcome.commit : "not committed");
+        if (view && outcome.committed) {
+          const files = outcome.files;
+          view.stage("Commit", "done", `${outcome.commit} · ${files.length === 1 ? files[0] : `${files.length} files: ${files.slice(0, 3).join(", ")}${files.length > 3 ? ", ..." : ""}`}`);
+        } else {
+          print(outcome.message);
+          view?.stage("Commit", outcome.committed ? "done" : "skipped", outcome.committed ? outcome.commit : "not committed");
+        }
         if (outcome.committed && (await githubRepoOf(workdir))) print("To push it and open a pull request: /pr");
       } catch (err) {
         if (!(err instanceof FixError)) throw err;
@@ -503,8 +509,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   // clone, which can take a while. The loop ends on EOF / Ctrl-D.
   const lines = rl[Symbol.asyncIterator]();
 
-  print(HELP);
-  print();
+  if (!view) {
+    print(HELP); // the TUI lists the commands as you type /
+    print();
+  }
   showContext();
   if (opts.initialRepo) await openRepo(opts.initialRepo);
   else print(`Working directory: ${workdir}`);

@@ -15,6 +15,17 @@ describe("parseKeys", () => {
     expect(parseKeys("\x1b[15~a")).toEqual([{ name: "char", ch: "a" }]); // F5
     expect(parseKeys("\x1b")).toEqual([{ name: "escape" }]);
   });
+
+  it("reads the mouse wheel, and drops clicks so they never reach the input line", () => {
+    expect(parseKeys("\x1b[<64;10;5M\x1b[<65;3;20M\x1b[<80;1;1M")).toEqual([
+      { name: "wheel", delta: -1, row: 4, col: 9 },
+      { name: "wheel", delta: 1, row: 19, col: 2 },
+      { name: "wheel", delta: -1, row: 0, col: 0 }, // with Ctrl held
+    ]);
+    expect(parseKeys("\x1b[<0;10;5M\x1b[<0;10;5m\x1b[<32;11;5M\x1b[<66;1;1Ma")).toEqual([{ name: "char", ch: "a" }]); // click, release, drag, sideways wheel
+    expect(parseKeys(`\x1b[M${String.fromCharCode(96, 42, 37)}`)).toEqual([{ name: "wheel", delta: -1, row: 4, col: 9 }]); // terminals without SGR
+    expect(parseKeys("\x1b[1;2A\x1b[1;2B").map((k) => k.name)).toEqual(["shift-up", "shift-down"]);
+  });
 });
 
 describe("LineEditor", () => {
