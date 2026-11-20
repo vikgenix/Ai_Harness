@@ -5,7 +5,8 @@
 export type ModelErrorKind =
   | "auth" // key missing, wrong or without permission
   | "not_found" // usually a wrong model name
-  | "rate_limit"
+  | "rate_limit" // a short limit (per minute): waiting helps
+  | "quota" // the key's quota or credit is used up, or its plan has none for this model: waiting does not help
   | "bad_request" // the request itself was rejected
   | "server" // provider error or overload
   | "timeout"
@@ -20,6 +21,8 @@ const HINTS: Record<ModelErrorKind, string> = {
   auth: "Check that AI_API_KEY is valid for this provider.",
   not_found: "Check the model name in config/model.yaml or AI_MODEL.",
   rate_limit: "The provider is rate-limiting this key. Wait a moment and retry.",
+  quota:
+    "This key has no quota left for this model (none on its plan, used up for today, or out of credit). Waiting a minute will not help: pick another model with AI_MODEL (free tiers usually include Flash models, not Pro) or turn on billing for the key.",
   bad_request: "The provider rejected the request.",
   server: "The provider had an error or is overloaded. Retry shortly.",
   timeout: "The request timed out. Raise limits.request_timeout_s if this repeats.",
@@ -55,6 +58,19 @@ export function tooLargeSizes(detail: string): { limit?: number; requested?: num
   m = /input token count \(?([\d,]+)\)? exceeds the maximum number of tokens allowed \(?([\d,]+)/i.exec(detail); // Gemini
   if (m) return { limit: num(m[2]), requested: num(m[1]) };
   return {};
+}
+
+/**
+ * Provider messages that mean the quota is gone, not just busy for a minute:
+ * Gemini's "limit: 0" (the plan has no quota for this model) and per-day quotas
+ * (`...PerDay...` quota ids), OpenAI's insufficient_quota, and Anthropic's
+ * "credit balance is too low".
+ */
+const QUOTA_GONE = /\blimit: 0\b|PerDay|insufficient_quota|credit balance is too low/i;
+
+/** True if a provider error says the key's quota or credit is used up (see QUOTA_GONE). */
+export function isQuotaGone(text: string): boolean {
+  return QUOTA_GONE.test(text);
 }
 
 /** One line, at most MAX_DETAIL characters: provider messages can be long. */

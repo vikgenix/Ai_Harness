@@ -137,6 +137,38 @@ describe("toModelError (Gemini)", () => {
     expect(e.detail).toBe("API key not valid. Please pass a valid API key.");
   });
 
+  // Shape of Gemini's real 429: JSON inside JSON, quota lines after a long preamble, quota ids in details.
+  const quota429 = (lines: string[], quotaId: string) => {
+    const message = `You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n${lines.map((l) => `* Quota exceeded for metric: ${l}`).join("\n")}\nPlease retry in 30.5s.`;
+    const inner = JSON.stringify({ error: { code: 429, message, status: "RESOURCE_EXHAUSTED", details: [{ violations: [{ quotaId }] }] } });
+    return api(429, JSON.stringify({ error: { message: inner, code: 429 } }));
+  };
+
+  it("tells a quota the plan does not have (limit: 0) from a per-minute limit", () => {
+    const none = toModelError(
+      quota429(
+        [
+          "generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro",
+          "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3.1-pro",
+        ],
+        "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+      ),
+    );
+    expect(none.kind).toBe("quota");
+    expect(none.retryable).toBe(false);
+    expect(none.message).toMatch(/Waiting a minute will not help.*AI_MODEL.*billing/);
+    expect(none.detail).toBe(
+      "Quota exceeded: generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro; generate_content_free_tier_input_token_count, limit: 0, model: gemini-3.1-pro",
+    );
+
+    const daily = toModelError(quota429(["generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 50, model: gemini-2.5-flash"], "GenerateRequestsPerDayPerProjectPerModel-FreeTier"));
+    expect(daily.kind).toBe("quota");
+
+    const perMinute = toModelError(quota429(["generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 10, model: gemini-2.5-flash"], "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"));
+    expect(perMinute.kind).toBe("rate_limit");
+    expect(perMinute.retryable).toBe(true);
+  });
+
   it("classifies aborts and network failures", () => {
     const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
     expect(toModelError(abort).kind).toBe("aborted");

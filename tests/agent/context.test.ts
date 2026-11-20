@@ -44,6 +44,7 @@ describe("recognizing a request that is too large", () => {
   it("reads the wait a rate-limit message asks for", () => {
     expect(retryAfterMs("Please try again in 6.665s.")).toBe(6665);
     expect(retryAfterMs("Please try again in 1m2.5s")).toBe(62500);
+    expect(retryAfterMs("Please retry in 30.5s.")).toBe(30500); // Gemini
     expect(retryAfterMs("try again in 450ms")).toBe(450);
     expect(retryAfterMs("slow down")).toBeUndefined();
   });

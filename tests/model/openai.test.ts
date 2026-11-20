@@ -161,6 +161,12 @@ describe("toModelError (OpenAI)", () => {
     expect(toModelError(gen(status)).kind).toBe(kind);
   });
 
+  it("tells a used-up quota (insufficient_quota) from a rate limit", () => {
+    const quota = OpenAI.APIError.generate(429, { error: { message: "You exceeded your current quota, please check your plan and billing details.", code: "insufficient_quota" } }, undefined, new Headers());
+    expect(toModelError(quota).kind).toBe("quota");
+    expect(toModelError(quota).retryable).toBe(false);
+  });
+
   it("recognizes a tool call the host rejected against the schema (Groq tool_use_failed)", () => {
     const groq = OpenAI.APIError.generate(400, { error: { message: "tool call validation failed: parameters for tool grep did not match schema", code: "tool_use_failed" } }, undefined, new Headers());
     expect(toModelError(groq)).toMatchObject({ kind: "invalid_tool_call", detail: expect.stringContaining("did not match schema") });

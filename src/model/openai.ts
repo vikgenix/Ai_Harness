@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { Effort, HarnessConfig } from "../config.js";
 import type { Provider } from "../providers.js";
-import { isTooLarge, ModelError } from "./errors.js";
+import { isQuotaGone, isTooLarge, ModelError } from "./errors.js";
 import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
@@ -209,6 +209,7 @@ export function toModelError(err: unknown): ModelError {
       return new ModelError("auth", detail, err.status, opts);
     }
     if (err instanceof OpenAI.NotFoundError) return new ModelError("not_found", detail, err.status, opts);
+    if (err.code === "insufficient_quota" || (err.status === 429 && isQuotaGone(detail))) return new ModelError("quota", detail, err.status, opts);
     if (err instanceof OpenAI.RateLimitError) return new ModelError("rate_limit", detail, err.status, opts);
     if (err instanceof OpenAI.BadRequestError || err instanceof OpenAI.UnprocessableEntityError) {
       return new ModelError("bad_request", detail, err.status, opts);

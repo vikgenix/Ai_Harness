@@ -142,6 +142,11 @@ describe("toModelError", () => {
     expect(toModelError(gen(status)).kind).toBe(kind);
   });
 
+  it("reports a used-up credit balance as quota, not a bad request", () => {
+    const credit = Anthropic.APIError.generate(400, { error: { message: "Your credit balance is too low to access the Anthropic API." } }, undefined, new Headers());
+    expect(toModelError(credit).kind).toBe("quota");
+  });
+
   it("classifies connection problems and cancellation", () => {
     expect(toModelError(new Anthropic.APIConnectionTimeoutError()).kind).toBe("timeout");
     expect(toModelError(new Anthropic.APIConnectionError({ message: "ECONNREFUSED" })).kind).toBe("network");

@@ -31,7 +31,7 @@ export function forgetLearnedLimits(): void {
 
 /** The wait a rate-limit message asks for ("try again in 6.665s", "in 1m2.5s", "in 450ms"), or undefined. */
 export function retryAfterMs(detail: string): number | undefined {
-  const m = /try again in (?:(\d+)m)?([\d.]+)(ms|s)\b/i.exec(detail);
+  const m = /(?:try again|retry) in (?:(\d+)m)?([\d.]+)(ms|s)\b/i.exec(detail);
   if (!m) return undefined;
   return (Number(m[1] ?? 0) * 60 + Number(m[2]) / (m[3] === "ms" ? 1000 : 1)) * 1000;
 }

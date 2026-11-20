@@ -9,7 +9,7 @@ import {
   type Part,
 } from "@google/genai";
 import type { Effort, HarnessConfig } from "../config.js";
-import { isTooLarge, ModelError } from "./errors.js";
+import { isQuotaGone, isTooLarge, ModelError } from "./errors.js";
 import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
@@ -241,7 +241,12 @@ export function toModelError(err: unknown): ModelError {
     // An invalid key is a 400 with this reason code, not a 401.
     if (s === 401 || s === 403 || err.message.includes("API_KEY_INVALID")) return new ModelError("auth", detail, s, opts);
     if (s === 404) return new ModelError("not_found", detail, s, opts);
-    if (s === 429) return new ModelError("rate_limit", detail, s, opts);
+    if (s === 429) {
+      if (!isQuotaGone(err.message)) return new ModelError("rate_limit", detail, s, opts);
+      // The quota lines come after a long preamble; put them first so they survive shortening.
+      const quotas = [...detail.matchAll(/Quota exceeded for metric: ([^\n]*)/g)].map((m) => m[1]!.replace(/generativelanguage\.googleapis\.com\//g, "").trim());
+      return new ModelError("quota", quotas.length ? `Quota exceeded: ${[...new Set(quotas)].join("; ")}` : detail, s, opts);
+    }
     if (s === 400) return new ModelError("bad_request", detail, s, opts);
     if (s >= 500) return new ModelError("server", detail, s, opts);
     return new ModelError("unknown", detail, s, opts);

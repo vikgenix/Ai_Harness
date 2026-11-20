@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { HarnessConfig } from "../config.js";
 import { DEFAULT_BASE_URLS } from "../providers.js";
-import { isTooLarge, ModelError } from "./errors.js";
+import { isQuotaGone, isTooLarge, ModelError } from "./errors.js";
 import type { ChatRequest, ChatResponse, Message, ModelClient, StopReason, ToolCall, ToolSpec, Usage } from "./types.js";
 
 /**
@@ -171,6 +171,7 @@ export function toModelError(err: unknown): ModelError {
       return new ModelError("auth", detail, err.status, opts);
     }
     if (err instanceof Anthropic.NotFoundError) return new ModelError("not_found", detail, err.status, opts);
+    if (isQuotaGone(detail)) return new ModelError("quota", detail, err.status, opts);
     if (err instanceof Anthropic.RateLimitError) return new ModelError("rate_limit", detail, err.status, opts);
     if (err instanceof Anthropic.BadRequestError) return new ModelError("bad_request", detail, err.status, opts);
     if (err instanceof Anthropic.InternalServerError) return new ModelError("server", detail, err.status, opts);
