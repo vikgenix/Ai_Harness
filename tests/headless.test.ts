@@ -1,14 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { EXIT, runHeadless, type HeadlessOptions } from "../src/headless.js";
 import { UsageTracker } from "../src/model/cost.js";
 import type { ChatResponse, ModelClient, ToolCall } from "../src/model/index.js";
 import { makeSourceRepo } from "./helpers.js";
+import { installFakeDocker } from "./sandbox/fake-docker.js";
 
 const config = loadConfig({ env: { AI_API_KEY: "sk-ant-fake" } });
 const savedEnv = { ...process.env };
@@ -62,6 +63,7 @@ async function headless(model: ModelClient, extra: Partial<HeadlessOptions> = {}
     repo: sourceUrl,
     workspacesDir: ws,
     runsDir,
+    envsDir: path.join(base, "envs"), // never the harness's own envs/
     output,
     ...extra,
   });
@@ -142,6 +144,52 @@ describe("runHeadless", () => {
     expect(out).not.toContain("Repo map:");
     const transcript = JSON.parse(await readFile(path.join(runDir!, "transcript.json"), "utf8"));
     expect(transcript[0].content).toMatch(/^<project>\n[^]*\n<\/project>\n\nFix this in the repository:\n\nno map please$/);
+  });
+
+  describe("with the Docker sandbox", () => {
+    const sandboxed = { ...config, sandbox: "docker" as const };
+    let fake: Awaited<ReturnType<typeof installFakeDocker>>;
+    beforeAll(async () => {
+      const bin = path.join(base, "fake-docker");
+      await mkdir(bin);
+      fake = await installFakeDocker(bin);
+    });
+    afterEach(() => {
+      process.env.PATH = savedEnv.PATH;
+      delete process.env.FAKE_DOCKER_DOWN;
+    });
+    const useFake = () => {
+      process.env.PATH = `${fake.bin}${path.delimiter}${savedEnv.PATH}`;
+      process.env.FAKE_DOCKER_LOG = fake.log;
+    };
+
+    it("runs the agent's commands in the container and removes it afterwards", async () => {
+      useFake();
+      const bash: ToolCall = { id: "b1", name: "bash", input: { command: "echo in-container:$HARNESS_COMMAND_ID" } };
+      const model = scripted([[bash], [finish("blocked", "Only looked.")]]);
+      const { code, out, runDir } = await headless(model, { task: "look around", config: sandboxed });
+      expect(code).toBe(EXIT.noFix);
+      expect(out).toMatch(/Sandbox: Docker container ai-harness-local__demo-[0-9a-f]{8} \(debian:bookworm-slim, network on\)\./);
+      const calls = await fake.calls();
+      const name = calls.find((c) => c[0] === "run")![calls.find((c) => c[0] === "run")!.indexOf("--name") + 1]!;
+      expect(calls.some((c) => c[0] === "exec" && c.at(-1) === "echo in-container:$HARNESS_COMMAND_ID")).toBe(true);
+      expect(calls.at(-1)).toEqual(["rm", "-f", name]);
+      const record = JSON.parse(await readFile(path.join(runDir!, "result.json"), "utf8"));
+      expect(record.sandbox).toEqual({ image: "debian:bookworm-slim", network: true });
+      const transcript = JSON.parse(await readFile(path.join(runDir!, "transcript.json"), "utf8"));
+      expect(transcript[0].content).toContain("Commands run in a Docker container (image debian:bookworm-slim, network on)");
+      expect(transcript[2].results[0].content).toMatch(/^in-container:[0-9a-f-]{36}\n/);
+    });
+
+    it("exits 2 before making a branch when Docker is not running", async () => {
+      useFake();
+      process.env.FAKE_DOCKER_DOWN = "1";
+      const { code, out, clone } = await headless(scripted([]), { task: "x", config: sandboxed });
+      expect(code).toBe(EXIT.setup);
+      expect(out).toContain("Docker is not running (Cannot connect to the Docker daemon");
+      expect(out).toContain("Start Docker, or run without the sandbox (sandbox: none in config/model.yaml).");
+      expect(execFileSync("git", ["branch", "--list", "harness/*"], { cwd: clone }).toString()).toBe("");
+    });
   });
 
   it("works on a local directory as-is", async () => {

@@ -12,10 +12,11 @@ import { GitHubError } from "../github/issues.js";
 import { formatUsage, type UsageTracker } from "../model/cost.js";
 import type { Message, ModelClient, ToolCall } from "../model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "../repo/clone.js";
-import { describeProject, projectBlock, projectFor, withProject } from "../repo/detect.js";
-import { dependencyLines, describeSetup, existingEnvironment, prepareEnvironment } from "../repo/env.js";
-import { describeBaseline, runBaseline, withBaseline } from "../repo/baseline.js";
-import { describeRepoMap, repoMapFor, withRepoMap } from "../repo/map.js";
+import { describeProject, projectBlock, projectFor } from "../repo/detect.js";
+import { existingEnvironment } from "../repo/env.js";
+import { describeRepoMap, repoMapFor } from "../repo/map.js";
+import { envsDirOf, fixMessage, openSandbox, prepareWorkspace } from "../agent/workspace.js";
+import { SandboxError, type DockerSandbox } from "../sandbox/docker.js";
 import { createDefaultTools, type ToolRegistry } from "../tools/index.js";
 
 const HELP = `Type a request about the code in the working directory, or a command:
@@ -91,8 +92,10 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   const tools = opts.tools ?? createDefaultTools();
   let repo: string | undefined;
   let workdir = path.resolve(opts.workdir ?? process.cwd());
+  /** The Docker container for the working directory, when config.sandbox is "docker" (started on first use). */
+  let sandbox: DockerSandbox | undefined;
   /** The installed dependencies of the working directory, active in the agent's commands. */
-  let toolEnv = existingEnvironment(workdir, opts.envsDir);
+  let toolEnv = config.sandbox === "docker" ? undefined : existingEnvironment(workdir, opts.envsDir);
   let history: Message[] = [];
   let inFlight: AbortController | undefined;
 
@@ -109,6 +112,39 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     if (inFlight) inFlight.abort();
     else rl.close();
   });
+
+  /** Runs one slow step that Ctrl-C can cancel without leaving the session. */
+  async function step<T>(fn: (signal?: AbortSignal) => Promise<T>): Promise<T> {
+    inFlight = new AbortController();
+    try {
+      return await fn(inFlight.signal);
+    } finally {
+      inFlight = undefined;
+    }
+  }
+
+  /** Starts the sandbox for the working directory if it is wanted and not running. False if it cannot start. */
+  async function ensureSandbox(): Promise<boolean> {
+    if (config.sandbox !== "docker" || sandbox) return true;
+    try {
+      sandbox = await step((signal) => openSandbox(workdir, config, { envsDir: opts.envsDir, signal, print }));
+      toolEnv = existingEnvironment(workdir, envsDirOf(sandbox, opts.envsDir));
+      return true;
+    } catch (err) {
+      if (!(err instanceof SandboxError)) throw err;
+      print(err.message);
+      return false;
+    }
+  }
+
+  /** Switches the tools to another directory: a new sandbox and environment for it. */
+  async function setWorkdir(dir: string): Promise<void> {
+    await sandbox?.close();
+    sandbox = undefined;
+    workdir = dir;
+    toolEnv = config.sandbox === "docker" ? undefined : existingEnvironment(workdir, opts.envsDir);
+    history = []; // earlier tool results refer to the old directory
+  }
 
   /** Runs the agent on `text` and shows its progress. `mode` replaces the chat's system prompt and history (used by /fix). */
   async function send(text: string, mode: { system?: string; history?: Message[]; review?: SelfReview } = {}): Promise<AgentResult> {
@@ -135,6 +171,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         system: mode.system ?? agentSystemPrompt(workdir),
         root: workdir,
         env: toolEnv,
+        sandbox,
         tracker,
         limits: config.limits,
         history: mode.history ?? history,
@@ -185,9 +222,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   async function openRepo(target: string): Promise<void> {
     if (isDirectory(target)) {
       repo = target;
-      workdir = path.resolve(target);
-      toolEnv = existingEnvironment(workdir, opts.envsDir);
-      history = []; // earlier tool results refer to the old directory
+      await setWorkdir(path.resolve(target));
       print(`Working directory: ${workdir} (new conversation)`);
       return;
     }
@@ -201,9 +236,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     try {
       const cloned = await cloneRepo(spec, { workspacesDir: opts.workspacesDir, githubToken: opts.githubToken, signal: inFlight.signal });
       repo = target;
-      workdir = cloned.dir;
-      toolEnv = existingEnvironment(workdir, opts.envsDir);
-      history = [];
+      await setWorkdir(cloned.dir);
       print(cloned.reused ? "Using the existing clone (make clean removes it for a fresh copy)." : `Cloned in ${(cloned.durationMs / 1000).toFixed(1)}s.`);
       print(`Working directory: ${workdir} (new conversation)`);
     } catch (err) {
@@ -229,6 +262,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
     print(describeTask(task));
 
+    if (!(await ensureSandbox())) return; // before the branch, so a missing Docker changes nothing
+
     let branch;
     try {
       branch = await startFix(workdir, task);
@@ -238,38 +273,13 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       return;
     }
     print(`Working on branch ${branch.branch} (from ${branch.baseName}).`);
-    const map = await repoMapFor(workdir, taskText(task), config.repoMapTokens);
-    if (map) print(describeRepoMap(map));
-    const project = await projectFor(workdir);
-    if (project) print(describeProject(project));
-    let setup;
-    if (project && config.installDeps) {
-      inFlight = new AbortController(); // Ctrl-C stops the install; the fix goes on without it
-      try {
-        setup = await prepareEnvironment(workdir, project, { envsDir: opts.envsDir, timeoutS: config.installTimeoutS, signal: inFlight.signal, onProgress: print });
-      } finally {
-        inFlight = undefined;
-      }
-      if (setup) {
-        print(describeSetup(setup));
-        toolEnv = setup.env;
-      }
-    }
-    let baseline;
-    if (project && config.baselineTests) {
-      inFlight = new AbortController(); // Ctrl-C stops the baseline; the fix goes on without it
-      try {
-        baseline = await runBaseline(workdir, project, { env: toolEnv, envsDir: opts.envsDir, timeoutS: config.baselineTimeoutS, signal: inFlight.signal, onProgress: print });
-      } finally {
-        inFlight = undefined;
-      }
-      if (baseline) print(describeBaseline(baseline));
-    }
+    // Ctrl-C during the install or the baseline skips that step; the fix goes on without it.
+    const ws = await prepareWorkspace(workdir, { config, query: taskText(task), envsDir: opts.envsDir, print, step, sandbox });
+    if (ws.env) toolEnv = ws.env;
 
     // A fix is its own conversation; afterwards the chat continues from it.
     const review = config.selfReview ? createSelfReview(workdir, branch) : undefined;
-    const message = withProject(withBaseline(taskPrompt(task), baseline, project), project, setup && dependencyLines(setup));
-    const result = await send(withRepoMap(message, map), { system: fixSystemPrompt(workdir), history: [], review });
+    const result = await send(fixMessage(taskPrompt(task), ws), { system: fixSystemPrompt(workdir), history: [], review });
     try {
       print((await completeFix(workdir, branch, task, result)).message);
     } catch (err) {
@@ -299,7 +309,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       }
 
       if (!line.startsWith("/")) {
-        await send(line);
+        if (await ensureSandbox()) await send(line);
         prompt();
         continue;
       }
@@ -337,7 +347,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
           break;
         }
         case "/project": {
-          const project = await projectFor(workdir);
+          const project = await projectFor(workdir, sandbox && ((tool) => sandbox!.toolVersion(tool)));
           print(project ? `${projectBlock(project).replace(/^<project>\n|\n<\/project>$/g, "")}\n\n${describeProject(project)}` : "Could not read the project files.");
           break;
         }
@@ -353,5 +363,6 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
   } finally {
     rl.close();
+    await sandbox?.close();
   }
 }

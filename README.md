@@ -2,7 +2,7 @@
 
 A coding agent for the terminal. Give it a GitHub repository and an issue (or a description of a bug). It clones the repo, finds the relevant code, reproduces the problem, fixes it, runs the tests and commits the fix. It can also open a pull request.
 
-> **Status:** Phases 1–3 done, Phase 4 in progress. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
+> **Status:** Phases 1–4 done. The harness talks to Anthropic, OpenAI, Gemini, Groq and any OpenAI-compatible model, runs an agent loop with eight tools, and fixes GitHub issues or described bugs end to end: repository map, project detection, dependency install, baseline tests, branch, reproduce → fix → verify, self-review, commit, optionally inside a Docker sandbox. It runs interactively or headless with exit codes and run records. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -93,7 +93,7 @@ The agent's `bash` commands run with the environment active (`VIRTUAL_ENV`, the 
 - **The repository stays clean.** Lockfiles the install rewrote are restored, and new files it made (`*.egg-info`, `node_modules/` without a `.gitignore`, ...) are added to `.git/info/exclude`, so they never end up in the fix commit.
 - **Fast the second time.** An install is skipped when the project files (`pyproject.toml`, lockfiles, `package.json`, ...) have not changed since the last successful one. Reopening the repository with `/repo` in a later session uses the environment again.
 - **Bounded.** Each install command stops after `install_timeout_s` (default 600). A failed install never stops the fix. Ctrl-C skips the rest of the install. Set `install_deps: false` in `config/model.yaml` to turn it off.
-- **Same trust as running the tests.** Installing runs the project's build code (`setup.py`, install scripts), as running its tests does; the harness's API keys and tokens are removed from its environment. For untrusted repositories, run the harness in a container.
+- **Same trust as running the tests.** Installing runs the project's build code (`setup.py`, install scripts), as running its tests does; the harness's API keys and tokens are removed from its environment. For untrusted repositories, use the [Docker sandbox](#docker-sandbox).
 
 `make clean` removes `envs/`.
 
@@ -122,6 +122,32 @@ The agent gets the result in a `<baseline>` block:
 - **The repository stays clean:** files the tests change or leave behind are restored or added to `.git/info/exclude`, as for the install.
 
 The tests run with the installed dependencies, and without the harness's API keys. Ctrl-C skips the baseline. Set `baseline_tests: false` in `config/model.yaml` to turn it off.
+
+### Docker sandbox
+
+By default, commands run on your machine with your user's rights; the `bash` tool's refusals are a guard rail, not a wall. For a repository you don't trust, run them in a Docker container instead:
+
+```bash
+make run SANDBOX=docker REPO=owner/project TASK="..."   # one run
+# or for good: sandbox: docker in config/model.yaml
+```
+
+```
+Sandbox: Docker container ai-harness-pallets__click-196474b7 (python:3.12-slim-bookworm, network on).
+Project: Python (uv) · tests: python3 -m pytest · not installed: uv
+  Python: python3 -m venv "$VIRTUAL_ENV"; python -m pip install --quiet --disable-pip-version-check -e .; ...
+  ✓ Python: installed in 8.0s
+```
+
+- **What runs inside:** the agent's `bash` commands, the dependency install and the baseline tests. The file tools and git still run outside, on the same files.
+- **What it sees:** only the repository and its dependency environment, mounted at the same paths as outside, so paths in error messages match the files the agent edits. Your home directory, other projects and the harness's API keys are not there.
+- **Locked down:** it runs as your user (files it writes stay yours), with all Linux capabilities dropped, `no-new-privileges` and a process limit. Network access is on by default, since installs need it; `sandbox_network: false` turns it off.
+- **The image** is picked from the project: `python:3.12-slim-bookworm` (or the version `requires-python` asks for), `node:22-bookworm-slim`, `golang:<go.mod version>-bookworm`, `rust:1-slim-bookworm`, Maven, Gradle, Ruby, PHP (`composer:2`), .NET, else `debian:bookworm-slim`. Set `sandbox_image` to use your own (with the project's tools installed). An image is pulled on first use.
+- **Separate environments:** dependencies installed in the container go in `envs/docker/<image>/`, since a Linux virtualenv does not work outside it. Package caches (pip, npm, Go, Cargo, Maven, Gradle) are kept there too, so a second container installs quickly. The tool versions in the `<project>` block are the container's.
+- **Cleaned up:** one container per fix, or per repository in the interactive session. It is removed when the fix ends or the harness exits, and leftovers of a killed harness are removed on the next start. A timeout or Ctrl-C kills every process the command started in the container, background ones included.
+- **Docker is required:** if it is not installed or not running, the run stops with exit code 2 before making a branch.
+
+Slim images lack some tools (git, `less`, compilers). The baseline shows the effect: tests that need them already fail there, so the agent does not blame itself for them.
 
 ### Self-review
 
@@ -172,14 +198,14 @@ Every run is saved in `runs/<date>-<time>-<branch>/` (git-ignored, removed by `m
 
 | File | Content |
 |---|---|
-| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results, baseline test results |
+| `result.json` | task, branch, status and outcome, summary, commit, changed files, steps, tokens, cost, duration, self-review findings, repository map size, detected project and tools, dependency install results, baseline test results, sandbox image |
 | `fix.patch` | the fix commit as a `git format-patch` file, ready for `git am` (only when committed) |
 | `transcript.json` | the full conversation with the model, for debugging (the first message holds the repository map) |
 
 | Command | What it does |
 |---|---|
 | `make setup` | Installs dependencies and builds. Needs only `make`, `bash`, `curl` and `git`. |
-| `make run` | Starts the harness (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. |
+| `make run` | Starts the harness (rebuilding first if the source changed). Stops with a clear message if `AI_API_KEY` is not set. With `REPO=` and `ISSUE=` or `TASK=` it runs one fix without the UI. `SANDBOX=docker` runs the commands in a [Docker container](#docker-sandbox). |
 | `make ping` | Sends one tiny request to check that the key, model and endpoint work. |
 | `make test` | Runs the offline test suite (no API key, no network) and a secret scan. |
 | `make clean` | Removes build output, run logs, cloned repos, dependency environments and the local Node.js copy. |
@@ -233,7 +259,7 @@ The agent works in a loop: it asks the model, runs the tools the model calls, se
 | `find_files` | Finds files by name or path: a glob (`*.py`, `tests/**/test_*.ts`, `*.{js,ts}`) or plain text matched anywhere in the path, ignoring case (`config`). Skips files ignored by git. Shows up to 200 paths. |
 | `edit_file` | Changes an existing file by replacing exact text (`old_string` → `new_string`). The text must be unique unless `replace_all` is set; a miss explains why (different indentation, copied line numbers). Keeps CRLF line endings and file permissions, writes atomically, never touches `.git/`. Returns the edited lines with their new numbers. |
 | `create_file` | Creates a new file (and missing parent directories). Never overwrites: an existing file is an error pointing to `edit_file`. Files starting with `#!` are made executable. Max 1 MB, never inside `.git/`. |
-| `bash` | Runs a shell command in the repository root (tests, builds, git status). Fresh shell per call, no input (prompts get EOF), timeout 120s by default (max 600s) that stops the whole process tree. Output keeps the first 10k and last 20k characters, without colour codes. The installed dependencies are active ([Dependencies](#dependencies)); API keys and tokens are removed from the command's environment. Refuses `sudo`, `git push`, `rm` outside the repo or of `.git`, `curl \| sh` and similar. This is a guard rail, not a sandbox: for untrusted repositories, run the harness in a container. |
+| `bash` | Runs a shell command in the repository root (tests, builds, git status). Fresh shell per call, no input (prompts get EOF), timeout 120s by default (max 600s) that stops the whole process tree. Output keeps the first 10k and last 20k characters, without colour codes. The installed dependencies are active ([Dependencies](#dependencies)); API keys and tokens are removed from the command's environment. Refuses `sudo`, `git push`, `rm` outside the repo or of `.git`, `curl \| sh` and similar. This is a guard rail, not a sandbox: for untrusted repositories, turn on the [Docker sandbox](#docker-sandbox), which runs the commands in a container. |
 | `finish` | Ends a task with an outcome (`completed` or `blocked`) and a summary of what changed and how it was verified; the agent loop stops there. Must be called on its own, so the model has seen every tool result (e.g. failing tests) before declaring it is done. Plain questions are just answered. |
 
 Safety and limits:
@@ -266,6 +292,8 @@ src/repo/map.ts       repository map: tree-sitter symbols, ranked by the task, w
 src/repo/detect.ts    project detection: ecosystems, test commands, installed tools
 src/repo/env.ts       dependency install into envs/, keeping the repository clean
 src/repo/baseline.ts  baseline test run: test output parsers, cache, the <baseline> block
+src/sandbox/docker.ts optional Docker sandbox: image choice, container lifecycle, commands inside it
+src/agent/workspace.ts what /fix prepares before the agent: map, project, sandbox, install, baseline
 src/headless.ts       fix without the UI: exit codes, run records in runs/
 src/agent/            agent loop (model → tools → model ...), prompts, /fix tasks and workflow (branch, self-review, commit)
 src/github/issues.ts  reads GitHub issues (REST API, no SDK)
@@ -300,7 +328,7 @@ tests/                offline tests (vitest)
 | 1 ✅ | Skeleton, Makefile, config, provider detection, secret scan, clean-environment test |
 | 2 🚧 | ✅ Provider adapters (Anthropic, OpenAI-compatible, Gemini), streaming, prompt caching, cost tracking · ✅ agent loop, tool calling, `view_file`, `list_dir`, `grep`, `find_files`, `edit_file`, `create_file`, `bash`, `finish` |
 | 3 ✅ | ✅ `/fix` reads GitHub issues or a described task · ✅ fix branch, fix prompt (reproduce → fix → verify), commit · ✅ headless mode with run records · ✅ repo map · ✅ self-review |
-| 4 🚧 | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ✅ baseline test run · ⬜ optional Docker sandbox |
+| 4 ✅ | ✅ detect the ecosystem, test command and installed tools · ✅ install dependencies in an isolated environment · ✅ baseline test run · ✅ optional Docker sandbox |
 | 5 | GitHub: push, PR, `/audit` with duplicate check and confirmation before posting |
 | 6 | Full TUI |
 | 7 | `make eval` on SWE-bench Lite |

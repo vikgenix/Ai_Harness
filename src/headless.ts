@@ -13,10 +13,8 @@ import { GitHubError } from "./github/issues.js";
 import { formatUsage, type UsageTracker } from "./model/cost.js";
 import type { ModelClient } from "./model/index.js";
 import { CloneError, cloneRepo, parseRepoUrl } from "./repo/clone.js";
-import { describeProject, projectFor, withProject } from "./repo/detect.js";
-import { dependencyLines, describeSetup, prepareEnvironment } from "./repo/env.js";
-import { describeBaseline, runBaseline, withBaseline } from "./repo/baseline.js";
-import { describeRepoMap, repoMapFor, withRepoMap } from "./repo/map.js";
+import { fixMessage, prepareWorkspace, type Workspace } from "./agent/workspace.js";
+import { dockerProblem, SandboxError, type DockerSandbox } from "./sandbox/docker.js";
 import { createDefaultTools } from "./tools/index.js";
 import { describeCall } from "./ui/repl.js";
 
@@ -48,6 +46,15 @@ export interface HeadlessOptions {
 
 /** Fixes one issue or task without the UI. Returns the process exit code. */
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
+  const held: { sandbox?: DockerSandbox } = {};
+  try {
+    return await run(opts, held);
+  } finally {
+    await held.sandbox?.close(); // the container goes, whatever happened
+  }
+}
+
+async function run(opts: HeadlessOptions, held: { sandbox?: DockerSandbox }): Promise<number> {
   const output = opts.output ?? process.stdout;
   const print = (s = "") => output.write(`${s}\n`);
   const started = Date.now();
@@ -79,6 +86,15 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     }
   }
 
+  // Checked before the branch is made, so a missing Docker changes nothing.
+  if (opts.config.sandbox === "docker") {
+    const problem = await dockerProblem();
+    if (problem) {
+      print(`${problem}. Start Docker, or run without the sandbox (sandbox: none in config/model.yaml).`);
+      return EXIT.setup;
+    }
+  }
+
   // 2. Task and branch.
   let task: FixTask;
   let fix;
@@ -92,20 +108,16 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     return EXIT.setup;
   }
   print(`Working on branch ${fix.branch} (from ${fix.baseName}).`);
-  const map = await repoMapFor(dir, taskText(task), opts.config.repoMapTokens, opts.signal);
-  if (map) print(describeRepoMap(map));
-  const project = await projectFor(dir);
-  if (project) print(describeProject(project));
-  const setup =
-    project && opts.config.installDeps
-      ? await prepareEnvironment(dir, project, { envsDir: opts.envsDir, timeoutS: opts.config.installTimeoutS, signal: opts.signal, onProgress: print })
-      : undefined;
-  if (setup) print(describeSetup(setup));
-  const baseline =
-    project && opts.config.baselineTests
-      ? await runBaseline(dir, project, { env: setup?.env, envsDir: opts.envsDir, timeoutS: opts.config.baselineTimeoutS, signal: opts.signal, onProgress: print })
-      : undefined;
-  if (baseline) print(describeBaseline(baseline));
+  let ws: Workspace;
+  try {
+    ws = await prepareWorkspace(dir, { config: opts.config, query: taskText(task), envsDir: opts.envsDir, signal: opts.signal, print, step: (fn) => fn(opts.signal) });
+  } catch (err) {
+    if (!(err instanceof SandboxError)) throw err;
+    print(err.message);
+    return EXIT.setup;
+  }
+  held.sandbox = ws.sandbox;
+  const { map, project, setup, baseline } = ws;
   print();
 
   // 3. Agent. Model text is streamed; tool calls are shown one per line.
@@ -126,10 +138,11 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     tools: createDefaultTools(),
     system: fixSystemPrompt(dir),
     root: dir,
-    env: setup?.env,
+    env: ws.env,
+    sandbox: ws.sandbox,
     tracker: opts.tracker,
     limits: opts.config.limits,
-    task: withRepoMap(withProject(withBaseline(taskPrompt(task), baseline, project), project, setup && dependencyLines(setup)), map),
+    task: fixMessage(taskPrompt(task), ws),
     signal: opts.signal,
     events: {
       onText: write,
@@ -189,6 +202,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     project: project
       ? { ecosystems: project.ecosystems.map((e) => ({ name: e.name, dir: e.dir, packageManager: e.packageManager ?? null, test: e.test?.command ?? null })), tools: project.tools }
       : null,
+    sandbox: ws.sandbox ? { image: ws.sandbox.image, network: ws.sandbox.network } : null,
     dependencies: setup
       ? {
           envDir: setup.envDir,

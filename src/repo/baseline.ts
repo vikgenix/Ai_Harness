@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { git } from "../agent/fix.js";
-import { commandEnv, runCommand } from "../tools/bash.js";
+import { runCommand } from "../tools/bash.js";
+import type { CommandSandbox } from "../tools/types.js";
 import type { ProjectInfo } from "./detect.js";
 import { envDirFor, keepClean, statusOf } from "./env.js";
 
@@ -83,6 +84,8 @@ export interface BaselineOptions {
   timeoutS?: number;
   signal?: AbortSignal;
   onProgress?(line: string): void;
+  /** Run the tests inside this sandbox (the Docker container) instead of on this machine. */
+  sandbox?: CommandSandbox;
   /** For tests: runs the test command (default: bash, credentials removed). */
   run?(command: string, cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<CommandOutcome>;
 }
@@ -268,8 +271,8 @@ function tail(output: string): string {
   return text.length > ERROR_CHARS ? `…${text.slice(-ERROR_CHARS)}` : text;
 }
 
-async function defaultRun(command: string, cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<CommandOutcome> {
-  const r = await runCommand(command, cwd, timeoutMs, signal, commandEnv(env));
+async function defaultRun(command: string, cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal, sandbox?: CommandSandbox): Promise<CommandOutcome> {
+  const r = await runCommand(command, cwd, timeoutMs, { signal, env, sandbox });
   return { output: r.output, code: r.code, timedOut: r.timedOut, cancelled: r.cancelled, durationMs: r.durationMs };
 }
 
@@ -301,7 +304,7 @@ export async function runBaseline(root: string, info: ProjectInfo, opts: Baselin
   const started = Date.now();
   const timeoutS = opts.timeoutS ?? DEFAULT_BASELINE_TIMEOUT_S;
   const progress = opts.onProgress ?? (() => {});
-  const run = opts.run ?? defaultRun;
+  const run = opts.run ?? ((command, cwd, env, ms, signal) => defaultRun(command, cwd, env, ms, signal, opts.sandbox));
   const envDir = envDirFor(root, opts.envsDir);
   const before = await statusOf(root);
 

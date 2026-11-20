@@ -53,6 +53,17 @@ install_timeout_s: 600
 baseline_tests: true
 baseline_timeout_s: 120
 
+# Sandbox: where the agent's commands, the install and the baseline tests run.
+#   none   - on this machine (default)
+#   docker - in a Docker container that only sees the repository (needs Docker
+#            running). Also for one run: make run SANDBOX=docker ...
+# sandbox_image: null picks an image for the project (python:3.12-slim-bookworm,
+# node:22-bookworm-slim, golang:1.23-bookworm, ...). sandbox_network: false
+# cuts the container off from the network (installs then fail).
+sandbox: none
+sandbox_image: null
+sandbox_network: true
+
 # Repeatability (spec section 10). Each setting is sent only to providers
 # that accept it (for example, the Anthropic API rejects temperature).
 temperature: 0

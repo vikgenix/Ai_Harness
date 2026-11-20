@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { ToolError, type Tool } from "./types.js";
+import { randomUUID } from "node:crypto";
+import { ToolError, type CommandSandbox, type Tool } from "./types.js";
 
 export const DEFAULT_TIMEOUT_S = 120;
 export const MAX_TIMEOUT_S = 600;
@@ -46,7 +47,7 @@ export const bash: Tool<BashInput> = {
     if (ctx.signal?.aborted) throw new ToolError("command cancelled");
 
     const timeoutS = Math.min(input.timeout_seconds ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
-    const result = await runCommand(command, root, timeoutS * 1000, ctx.signal, commandEnv(ctx.env));
+    const result = await runCommand(command, root, timeoutS * 1000, { signal: ctx.signal, env: ctx.env, sandbox: ctx.sandbox });
     if (result.cancelled) throw new ToolError("command cancelled");
 
     const seconds = (result.durationMs / 1000).toFixed(1);
@@ -68,14 +69,28 @@ export interface CommandResult {
   durationMs: number;
 }
 
-/** Runs a bash command in its own process group, so a timeout or cancel stops everything it started. */
-export function runCommand(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, env: NodeJS.ProcessEnv = commandEnv()): Promise<CommandResult> {
+export interface RunOptions {
+  signal?: AbortSignal;
+  /** Added to the command's environment (e.g. the installed dependencies). */
+  env?: Record<string, string>;
+  /** Run inside this sandbox instead of on this machine. */
+  sandbox?: CommandSandbox;
+}
+
+/**
+ * Runs a bash command in its own process group, so a timeout or cancel stops
+ * everything it started; in a sandbox, the processes it started there too.
+ */
+export function runCommand(command: string, cwd: string, timeoutMs: number, opts: RunOptions = {}): Promise<CommandResult> {
+  const { signal, sandbox } = opts;
   const started = Date.now();
   const output = new OutputBuffer();
+  const id = randomUUID();
+  const local = sandbox ? sandbox.command(command, cwd, opts.env ?? {}, id) : { file: "bash", args: ["-c", command] };
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-c", command], {
-      cwd,
-      env,
+    const child = spawn(local.file, local.args, {
+      cwd: sandbox ? undefined : cwd,
+      env: commandEnv(sandbox ? {} : opts.env), // a sandbox gets opts.env through its own command
       stdio: ["ignore", "pipe", "pipe"],
       detached: true, // own process group, so the whole tree can be stopped
     });
@@ -90,6 +105,7 @@ export function runCommand(command: string, cwd: string, timeoutMs: number, sign
       } catch {
         // already gone
       }
+      if (sig === "SIGKILL") void sandbox?.stop(id).catch(() => {});
     };
     const stop = () => {
       killGroup("SIGTERM");
@@ -127,7 +143,7 @@ export function runCommand(command: string, cwd: string, timeoutMs: number, sign
     child.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      reject(err.code === "ENOENT" ? new ToolError("bash is not installed or not on PATH") : err);
+      reject(err.code === "ENOENT" ? new ToolError(`${local.file} is not installed or not on PATH`) : err);
     });
     child.on("exit", (code, sig) => {
       exit = { code, signal: sig };
@@ -188,19 +204,20 @@ export function commandEnv(extra: Record<string, string> = {}): NodeJS.ProcessEn
     // The model's commands never see the harness's keys, so a prompt injection cannot send them anywhere.
     if (!SECRET_NAME.test(key)) env[key] = value;
   }
-  return {
-    ...env,
-    CI: "1",
-    NO_COLOR: "1",
-    TERM: "dumb",
-    PAGER: "cat",
-    GIT_PAGER: "cat",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_EDITOR: "true",
-    DEBIAN_FRONTEND: "noninteractive",
-    ...extra,
-  };
+  return { ...env, ...NON_INTERACTIVE_ENV, ...extra };
 }
+
+/** Keeps commands from waiting for input, paging or colouring their output. */
+export const NON_INTERACTIVE_ENV: Record<string, string> = {
+  CI: "1",
+  NO_COLOR: "1",
+  TERM: "dumb",
+  PAGER: "cat",
+  GIT_PAGER: "cat",
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_EDITOR: "true",
+  DEBIAN_FRONTEND: "noninteractive",
+};
 
 const REFUSED: [RegExp, string][] = [
   [/(^|[\s;&|(])(sudo|doas|su)(\s|$)/, "it would run as another user; commands run as the current user only"],

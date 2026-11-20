@@ -458,9 +458,10 @@ export async function detectProject(root: string, opts: { versionOf?: (tool: str
 
 /**
  * The detection as a block for the start of the task message. `dependencies`
- * says what the harness installed (replacing the "may not be installed" note).
+ * says what the harness installed (replacing the "may not be installed" note);
+ * `environment` where commands run (the Docker sandbox).
  */
-export function projectBlock(info: ProjectInfo, dependencies?: string[]): string {
+export function projectBlock(info: ProjectInfo, dependencies?: string[], environment?: string[]): string {
   const lines = ["<project>"];
   if (!info.ecosystems.length) {
     lines.push("No known project files (pyproject.toml, package.json, go.mod, ...) were found. Look at the README for how to build and test.");
@@ -479,6 +480,7 @@ export function projectBlock(info: ProjectInfo, dependencies?: string[]): string
   if (info.hints.length) lines.push("Also:", ...info.hints.map((h) => `- ${h}`));
   const have = Object.entries(info.tools).filter(([, v]) => v !== null);
   const missing = Object.entries(info.tools).filter(([, v]) => v === null).map(([t]) => t);
+  if (environment?.length) lines.push(...environment);
   if (have.length) lines.push(`Installed: ${have.map(([t, v]) => `${t} ${v}`).join(", ")}`);
   if (missing.length) lines.push(`Not installed: ${missing.join(", ")} (commands that need them will fail; say so in the summary if the tests cannot run)`);
   if (dependencies?.length) lines.push(...dependencies);
@@ -488,8 +490,8 @@ export function projectBlock(info: ProjectInfo, dependencies?: string[]): string
 }
 
 /** The task message with the project block in front. */
-export function withProject(prompt: string, info: ProjectInfo | undefined, dependencies?: string[]): string {
-  return info ? `${projectBlock(info, dependencies)}\n\n${prompt}` : prompt;
+export function withProject(prompt: string, info: ProjectInfo | undefined, dependencies?: string[], environment?: string[]): string {
+  return info ? `${projectBlock(info, dependencies, environment)}\n\n${prompt}` : prompt;
 }
 
 /** One line for the terminal: "Project: Python (uv) · tests: python3 -m pytest · python3 3.12.4". */
@@ -503,10 +505,13 @@ export function describeProject(info: ProjectInfo): string {
   return `Project: ${parts.join("; ")}${missing.length ? ` · not installed: ${missing.join(", ")}` : ""}`;
 }
 
-/** Detection for a task, or undefined if it fails: it only saves steps, so it never stops the task. */
-export async function projectFor(root: string): Promise<ProjectInfo | undefined> {
+/**
+ * Detection for a task, or undefined if it fails: it only saves steps, so it
+ * never stops the task. `versionOf` looks tools up elsewhere (in the sandbox).
+ */
+export async function projectFor(root: string, versionOf?: (tool: string) => Promise<string | null>): Promise<ProjectInfo | undefined> {
   try {
-    return await detectProject(root);
+    return await detectProject(root, { versionOf });
   } catch {
     return undefined;
   }

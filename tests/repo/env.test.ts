@@ -176,6 +176,7 @@ describe("prepareEnvironment", () => {
     const { ran, run } = fakeRun(async (step) => {
       if (step.command.includes("venv")) {
         await mkdir(path.join(step.env!.VIRTUAL_ENV!, "bin"), { recursive: true });
+        await writeFile(path.join(step.env!.VIRTUAL_ENV!, "pyvenv.cfg"), "");
         await writeFile(path.join(step.env!.VIRTUAL_ENV!, "bin/python"), "");
       }
       if (step.command.includes("-e ")) return { ok: false, status: "exit 1", output: "build failed", cancelled: false };

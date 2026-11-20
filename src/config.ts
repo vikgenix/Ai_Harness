@@ -44,6 +44,12 @@ export interface HarnessConfig {
   baselineTests: boolean;
   /** Time limit for each baseline test command, in seconds. */
   baselineTimeoutS: number;
+  /** Where commands run: on this machine, or in a Docker container. */
+  sandbox: Sandbox;
+  /** Docker image; undefined picks one for the project's language. */
+  sandboxImage: string | undefined;
+  /** Whether the container can reach the network (installs need it). */
+  sandboxNetwork: boolean;
   /** undefined when the provider does not accept the setting. */
   temperature: number | undefined;
   seed: number | undefined;
@@ -58,6 +64,8 @@ export interface HarnessConfig {
 }
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const SANDBOXES = ["none", "docker"] as const;
+export type Sandbox = (typeof SANDBOXES)[number];
 export type Effort = (typeof EFFORTS)[number];
 
 type Env = Record<string, string | undefined>;
@@ -142,6 +150,13 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
   if (typeof installDeps !== "boolean") throw new ConfigError("'install_deps' must be true or false.");
   const baselineTests = file.baseline_tests ?? true;
   if (typeof baselineTests !== "boolean") throw new ConfigError("'baseline_tests' must be true or false.");
+  // AI_SANDBOX=docker turns the sandbox on for one run without editing the file.
+  const sandbox = blankToUndefined(env.AI_SANDBOX) ?? optionalString(file, "sandbox") ?? "none";
+  if (!(SANDBOXES as readonly string[]).includes(sandbox)) {
+    throw new ConfigError(`'sandbox' (or AI_SANDBOX) must be one of: ${SANDBOXES.join(", ")}.`);
+  }
+  const sandboxNetwork = file.sandbox_network ?? true;
+  if (typeof sandboxNetwork !== "boolean") throw new ConfigError("'sandbox_network' must be true or false.");
 
   return {
     provider,
@@ -158,6 +173,9 @@ export function loadConfig(opts: LoadOptions = {}): HarnessConfig {
     installTimeoutS: optionalNumber(file, "install_timeout_s", 10, 3600) ?? 600,
     baselineTests,
     baselineTimeoutS: optionalNumber(file, "baseline_timeout_s", 5, 3600) ?? 120,
+    sandbox: sandbox as Sandbox,
+    sandboxImage: optionalString(file, "sandbox_image"),
+    sandboxNetwork,
     temperature: SUPPORTS_TEMPERATURE[provider] ? temperature : undefined,
     seed: SUPPORTS_SEED[provider] ? seed : undefined,
     limits: {
@@ -195,6 +213,7 @@ export function describeConfig(c: HarnessConfig): string {
     `model    : ${c.model}`,
     `endpoint : ${c.baseUrl}`,
     `limits   : ${c.limits.maxSteps} steps, $${c.limits.maxCostUsd.toFixed(2)} per task`,
+    ...(c.sandbox === "docker" ? [`sandbox  : docker (${c.sandboxImage ?? "image picked per project"}, network ${c.sandboxNetwork ? "on" : "off"})`] : []),
   ].join("\n");
 }
 

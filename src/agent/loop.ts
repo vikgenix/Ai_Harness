@@ -3,6 +3,7 @@ import { ModelError } from "../model/errors.js";
 import { emptyUsage, type ChatResponse, type Message, type ModelClient, type ToolCall, type ToolResult, type Usage } from "../model/types.js";
 import { FINISH_TOOL, type FinishInput } from "../tools/finish.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { CommandSandbox } from "../tools/types.js";
 
 /** How many times a turn is re-sent when the model's output can't be parsed. */
 const MAX_INVALID_OUTPUT_RETRIES = 2;
@@ -38,6 +39,8 @@ export interface AgentOptions {
   root: string;
   /** Extra environment for the agent's commands (the installed dependencies). */
   env?: Record<string, string>;
+  /** Runs the agent's commands in a container instead of on this machine. */
+  sandbox?: CommandSandbox;
   tracker: UsageTracker;
   limits: { maxSteps: number; maxCostUsd: number };
   /** Earlier conversation; the new task is appended to it. */
@@ -137,7 +140,7 @@ export async function runAgent(opts: AgentOptions): Promise<AgentResult> {
         call.name === FINISH_TOOL && calls.length > 1
           ? // The model has not seen the other results yet (e.g. failing tests), so it cannot know it is done.
             { callId: call.id, name: call.name, content: "Error: call finish on its own, after you have seen the results of your other tool calls", isError: true }
-          : await tools.run(call, { root: opts.root, signal, env: opts.env });
+          : await tools.run(call, { root: opts.root, signal, env: opts.env, sandbox: opts.sandbox });
       if (call.name === FINISH_TOOL && !result.isError && opts.beforeFinish && steps < limits.maxSteps && costUsd < limits.maxCostUsd && !signal?.aborted) {
         const objection = await opts.beforeFinish(call.input as FinishInput);
         if (objection !== undefined) {

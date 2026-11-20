@@ -4,7 +4,8 @@ import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promise
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { git } from "../agent/fix.js";
-import { commandEnv, runCommand } from "../tools/bash.js";
+import { runCommand } from "../tools/bash.js";
+import type { CommandSandbox } from "../tools/types.js";
 import { toolVersion, type Ecosystem, type ProjectInfo } from "./detect.js";
 
 /**
@@ -91,6 +92,8 @@ export interface PrepareOptions {
   signal?: AbortSignal;
   /** One line per ecosystem as it starts and ends. */
   onProgress?(line: string): void;
+  /** Install inside this sandbox (the Docker container) instead of on this machine. */
+  sandbox?: CommandSandbox;
   /** For tests: runs one command (default: bash, with credentials removed from the environment). */
   run?(step: InstallStep, cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<StepOutcome>;
   /** For tests: whether a tool is installed (default: asks the tool for its version). */
@@ -113,6 +116,8 @@ function realRoot(root: string): string {
 }
 
 const venvOf = (envDir: string) => path.join(envDir, "venv");
+/** pyvenv.cfg rather than bin/python: in a container's virtualenv, bin/python links to a path that exists only there. */
+const hasVenv = (envDir: string) => existsSync(path.join(venvOf(envDir), "pyvenv.cfg"));
 const bundleOf = (envDir: string) => path.join(envDir, "bundle");
 
 // --- plans -----------------------------------------------------------------------
@@ -212,7 +217,7 @@ async function fingerprint(root: string, plan: InstallPlan): Promise<string> {
 
 /** Whether what an earlier install made is still there. */
 function stillInstalled(root: string, envDir: string, e: Ecosystem): boolean {
-  if (e.name === "Python") return existsSync(path.join(venvOf(envDir), "bin", "python"));
+  if (e.name === "Python") return hasVenv(envDir);
   if (e.name === "Node.js") return existsSync(path.join(root, e.dir, "node_modules"));
   if (e.name === "Ruby") return existsSync(bundleOf(envDir));
   return true;
@@ -264,8 +269,8 @@ export async function keepClean(root: string, before: Map<string, string>, madeB
 
 // --- running ---------------------------------------------------------------------
 
-async function runStep(step: InstallStep, cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal): Promise<StepOutcome> {
-  const r = await runCommand(step.command, cwd, timeoutMs, signal, commandEnv(env));
+async function runStep(step: InstallStep, cwd: string, env: Record<string, string>, timeoutMs: number, signal?: AbortSignal, sandbox?: CommandSandbox): Promise<StepOutcome> {
+  const r = await runCommand(step.command, cwd, timeoutMs, { signal, env, sandbox });
   const status = r.timedOut ? `timed out after ${Math.round(timeoutMs / 1000)}s` : r.signal ? `killed by ${r.signal}` : `exit ${r.code}`;
   return { ok: !r.timedOut && !r.cancelled && r.code === 0, status, output: r.output, cancelled: r.cancelled };
 }
@@ -288,7 +293,7 @@ export async function prepareEnvironment(root: string, info: ProjectInfo, opts: 
   root = realRoot(root);
   const envDir = envDirFor(root, opts.envsDir);
   const progress = opts.onProgress ?? (() => {});
-  const run = opts.run ?? runStep;
+  const run = opts.run ?? ((step, cwd, env, ms, signal) => runStep(step, cwd, env, ms, signal, opts.sandbox));
   const timeoutMs = (opts.timeoutS ?? DEFAULT_INSTALL_TIMEOUT_S) * 1000;
 
   const tools = { ...info.tools };
@@ -352,7 +357,7 @@ export function environmentVars(root: string, envDir: string, nodeDirs: string[]
   const env: Record<string, string> = {};
   const binDirs: string[] = [];
   const venv = venvOf(envDir);
-  if (existsSync(path.join(venv, "bin", "python"))) {
+  if (hasVenv(envDir)) {
     env.VIRTUAL_ENV = venv;
     binDirs.push(path.join(venv, "bin"));
   }

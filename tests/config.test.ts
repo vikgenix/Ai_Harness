@@ -147,6 +147,15 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ configPath: yamlFile(`${BASE}\nbaseline_timeout_s: 1\n`), env: { AI_API_KEY: "sk-fake" } })).toThrow(/baseline_timeout_s/);
   });
 
+  it("reads the sandbox: none by default, docker from the file or AI_SANDBOX", () => {
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake" } })).toMatchObject({ sandbox: "none", sandboxImage: undefined, sandboxNetwork: true });
+    const file = loadConfig({ configPath: yamlFile(`${BASE}\nsandbox: docker\nsandbox_image: python:3.11\nsandbox_network: false\n`), env: { AI_API_KEY: "sk-fake" } });
+    expect(file).toMatchObject({ sandbox: "docker", sandboxImage: "python:3.11", sandboxNetwork: false });
+    expect(describeConfig(file)).toContain("sandbox  : docker (python:3.11, network off)");
+    expect(loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake", AI_SANDBOX: "docker" } }).sandbox).toBe("docker");
+    expect(() => loadConfig({ configPath: yamlFile(BASE), env: { AI_API_KEY: "sk-fake", AI_SANDBOX: "podman" } })).toThrow(/'sandbox' \(or AI_SANDBOX\) must be one of: none, docker/);
+  });
+
   it("rejects an invalid effort", () => {
     const configPath = yamlFile(`${BASE}\neffort: extreme\n`);
     expect(() => loadConfig({ configPath, env: { AI_API_KEY: "sk-fake" } })).toThrow(/'effort' must be one of/);

@@ -2,7 +2,7 @@
 #
 #   export AI_API_KEY="<key>"
 #   make setup      install everything (downloads Node.js locally if needed)
-#   make run        start the interactive harness
+#   make run        start the interactive harness (SANDBOX=docker: commands run in a container)
 #   make test       run the offline test suite + secret scan
 #   make clean      remove generated files
 #
@@ -40,7 +40,7 @@ dist/index.js: $(shell find src -name '*.ts' 2>/dev/null) tsconfig.json package.
 	@$(WITH_NODE) npm run --silent build
 
 run: check-key dist/index.js
-	@$(WITH_NODE) node dist/index.js $(RUN_ARGS)
+	@$(WITH_NODE) $(if $(SANDBOX),AI_SANDBOX="$(SANDBOX)") node dist/index.js $(RUN_ARGS)
 
 # One tiny request to check that the key, model and endpoint work.
 ping: check-key dist/index.js
