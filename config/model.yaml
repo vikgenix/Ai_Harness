@@ -8,7 +8,7 @@
 
 # Which API to call: auto | anthropic | openai | gemini | groq | openai-compatible
 # "auto" picks the provider from the key's prefix:
-#   sk-ant- -> anthropic   gsk_ -> groq   AIza -> gemini
+#   sk-ant- -> anthropic   gsk_ -> groq   AIza or AQ. -> gemini
 #   sk-or-  -> openai-compatible (OpenRouter)   sk- -> openai
 provider: auto
 

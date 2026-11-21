@@ -326,7 +326,7 @@ The provider is chosen in this order:
 |---|---|
 | `sk-ant-` | Anthropic |
 | `gsk_` | Groq |
-| `AIza` | Gemini |
+| `AIza` or `AQ.` | Gemini |
 | `sk-or-` | OpenRouter (OpenAI-compatible) |
 | `sk-` | OpenAI |
 

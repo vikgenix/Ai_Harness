@@ -43,7 +43,7 @@ export function detectProviderFromKey(key: string): Detected | null {
   const k = key.trim();
   if (k.startsWith("sk-ant-")) return { provider: "anthropic" };
   if (k.startsWith("gsk_")) return { provider: "groq" };
-  if (k.startsWith("AIza")) return { provider: "gemini" };
+  if (k.startsWith("AIza") || k.startsWith("AQ.")) return { provider: "gemini" }; // AQ.: Google's newer key format
   if (k.startsWith("sk-or-")) return { provider: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1" };
   if (k.startsWith("sk-")) return { provider: "openai" };
   return null;

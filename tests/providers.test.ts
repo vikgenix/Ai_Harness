@@ -6,6 +6,7 @@ describe("detectProviderFromKey", () => {
     ["sk-ant-fake", "anthropic"],
     ["gsk_fake", "groq"],
     ["AIzaFake", "gemini"],
+    ["AQ.FakeKey", "gemini"],
     ["sk-proj-fake", "openai"],
     ["sk-fake", "openai"],
     ["sk-or-v1-fake", "openai-compatible"],
